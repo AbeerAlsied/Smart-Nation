@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_geolocation import streamlit_geolocation
 import sqlite3
 import pandas as pd
 import plotly.express as px
@@ -7,10 +8,21 @@ import io
 import uuid
 import hmac
 import os
+import hashlib
+import secrets
 from datetime import datetime
+
+# =====================================================
+# CONFIGURATION
+# =====================================================
 
 st.set_page_config(page_title="Smart Nation", page_icon="🌍", layout="wide")
 DB_NAME = "smart_nation.db"
+
+
+# =====================================================
+# TRANSLATIONS
+# =====================================================
 
 translations = {
     "English": {
@@ -18,7 +30,7 @@ translations = {
         "navigation": "Navigation", "dashboard": "Dashboard & Analytics",
         "submit_report": "Submit Report", "manage_reports": "Manage Reports",
         "digital_identities": "Digital Identities", "verify_identity": "Verify Identity",
-        "city_map": "City Map", "ai_intelligence": "AI Intelligence",
+        "my_services": "My Services", "city_map": "City Map", "ai_intelligence": "AI Intelligence",
         "overview": "Platform Overview", "total_reports": "Total Reports",
         "pending_reports": "Pending Reports", "resolved_reports": "Resolved Reports",
         "registered_identities": "Registered Identities", "reports_by_category": "Reports by Category",
@@ -31,23 +43,22 @@ translations = {
         "normal": "Normal", "urgent": "Urgent", "submit": "Submit Report",
         "report_success": "Your report has been submitted successfully!",
         "report_error": "Please fill in all required fields.", "manage_title": "Manage City Reports",
-        "admin_login": "Administrator Login", "password": "Admin Password", "login": "Login",
-        "wrong_password": "Incorrect password.",
+        "admin_login": "Administrator Login", "password": "Password", "login": "Login",
+        "wrong_password": "Incorrect email or password.",
         "password_not_set": "Admin password is not configured. Add ADMIN_PASSWORD in Streamlit Secrets.",
         "admin_access": "Administrator access granted.", "report_code": "Report Code",
         "status": "Status", "pending": "Pending", "in_progress": "In Progress",
         "resolved": "Resolved", "update": "Update Status", "updated": "Report status updated.",
         "logout": "Logout", "download": "Download Reports CSV",
-        "identity_title": "Create Digital Identity", "create_identity": "Create Identity",
-        "identity_success": "Digital identity created successfully!", "identity_code": "Identity Code",
-        "created_at": "Created At", "identity_list": "Registered Identities",
-        "no_identities": "No digital identities registered yet.", "verify_title": "Verify Digital Identity",
-        "enter_code": "Enter Identity Code", "verify": "Verify Identity",
-        "valid_identity": "Valid digital identity found.",
+        "identity_title": "Create Digital Identity", "create_identity": "Create Account & Identity",
+        "identity_success": "Your account and digital identity were created successfully!",
+        "identity_code": "Identity Code", "created_at": "Created At",
+        "identity_list": "Registered Identities", "no_identities": "No digital identities registered yet.",
+        "verify_title": "Verify Digital Identity", "enter_code": "Enter Identity Code",
+        "verify": "Verify Identity", "valid_identity": "Valid digital identity found.",
         "invalid_identity": "Identity not found. Please check the code.",
         "map_title": "Smart City Reports Map", "map_empty": "No reports with location coordinates are available.",
-        "ai_title": "AI Report Intelligence",
-        "ai_description": "Enter a report description to analyze its category and priority.",
+        "ai_title": "AI Report Intelligence", "ai_description": "Enter a report description to analyze its category and priority.",
         "analyze": "Analyze Report", "analysis_result": "Analysis Result",
         "electricity": "Electricity", "water": "Water", "cleaning": "Cleaning",
         "roads": "Roads", "other_category": "Other",
@@ -56,14 +67,26 @@ translations = {
         "report_details": "Report Details", "enter_description": "Please enter a description.",
         "category_result": "Predicted Category", "priority_result": "Predicted Priority",
         "identity_details": "Identity Details", "identity_exists": "An identity with this email already exists.",
-        "select_status": "Select Status"
+        "select_status": "Select Status", "create_password": "Create Password",
+        "confirm_password": "Confirm Password", "password_mismatch": "Passwords do not match.",
+        "password_length": "Password must contain at least 8 characters.",
+        "account_created": "Account created. You are now logged in.",
+        "my_reports": "My Reports", "login_required": "Please log in to view your services.",
+        "no_my_reports": "You have not submitted any reports yet.",
+        "welcome": "Welcome", "login_to_account": "Log in to your account",
+        "email_exists_no_password": "This email already has an identity. Use the login section or contact the administrator to set up access.",
+        "report_owner_note": "Your report will be linked to your digital identity.",
+        "report_saved": "Your report was saved and linked to your account.",
+        "identity_created_at": "Identity Created", "account": "Account",
+        "identity_registration_note": "Create an account to receive a digital identity and follow your reports.",
+        "logout_account": "Log out of account", "status_tracking": "Report Status Tracking"
     },
     "العربية": {
         "app_title": "الأمة الذكية", "subtitle": "منصة التحول الرقمي المتكاملة",
         "navigation": "القائمة الرئيسية", "dashboard": "لوحة التحكم والتحليلات",
         "submit_report": "إرسال بلاغ", "manage_reports": "إدارة البلاغات",
         "digital_identities": "الهويات الرقمية", "verify_identity": "التحقق من الهوية",
-        "city_map": "خريطة المدينة", "ai_intelligence": "الذكاء الاصطناعي",
+        "my_services": "خدماتي وبلاغاتي", "city_map": "خريطة المدينة", "ai_intelligence": "الذكاء الاصطناعي",
         "overview": "نظرة عامة على المنصة", "total_reports": "إجمالي البلاغات",
         "pending_reports": "البلاغات المعلقة", "resolved_reports": "البلاغات المحلولة",
         "registered_identities": "الهويات المسجلة", "reports_by_category": "البلاغات حسب التصنيف",
@@ -76,19 +99,19 @@ translations = {
         "normal": "عادي", "urgent": "عاجل", "submit": "إرسال البلاغ",
         "report_success": "تم إرسال البلاغ بنجاح!", "report_error": "يرجى تعبئة جميع الحقول المطلوبة.",
         "manage_title": "إدارة بلاغات المدينة", "admin_login": "دخول المسؤول",
-        "password": "كلمة مرور المسؤول", "login": "تسجيل الدخول",
-        "wrong_password": "كلمة المرور غير صحيحة.",
+        "password": "كلمة المرور", "login": "تسجيل الدخول",
+        "wrong_password": "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
         "password_not_set": "لم يتم إعداد كلمة مرور المسؤول. أضف ADMIN_PASSWORD في إعدادات Secrets.",
         "admin_access": "تم السماح بدخول المسؤول.", "report_code": "رمز البلاغ",
         "status": "الحالة", "pending": "قيد الانتظار", "in_progress": "قيد المعالجة",
         "resolved": "تم الحل", "update": "تحديث الحالة", "updated": "تم تحديث حالة البلاغ.",
         "logout": "تسجيل الخروج", "download": "تحميل البلاغات CSV",
-        "identity_title": "إنشاء هوية رقمية", "create_identity": "إنشاء الهوية",
-        "identity_success": "تم إنشاء الهوية الرقمية بنجاح!", "identity_code": "رمز الهوية",
-        "created_at": "تاريخ الإنشاء", "identity_list": "الهويات المسجلة",
-        "no_identities": "لا توجد هويات رقمية مسجلة حتى الآن.", "verify_title": "التحقق من الهوية الرقمية",
-        "enter_code": "أدخل رمز الهوية", "verify": "تحقق من الهوية",
-        "valid_identity": "تم العثور على هوية رقمية صحيحة.",
+        "identity_title": "إنشاء هوية رقمية", "create_identity": "إنشاء الحساب والهوية",
+        "identity_success": "تم إنشاء الحساب والهوية الرقمية بنجاح!",
+        "identity_code": "رمز الهوية", "created_at": "تاريخ الإنشاء",
+        "identity_list": "الهويات المسجلة", "no_identities": "لا توجد هويات رقمية مسجلة حتى الآن.",
+        "verify_title": "التحقق من الهوية الرقمية", "enter_code": "أدخل رمز الهوية",
+        "verify": "تحقق من الهوية", "valid_identity": "تم العثور على هوية رقمية صحيحة.",
         "invalid_identity": "لم يتم العثور على الهوية. يرجى التأكد من الرمز.",
         "map_title": "خريطة بلاغات المدينة الذكية", "map_empty": "لا توجد بلاغات تحتوي على إحداثيات للموقع.",
         "ai_title": "تحليل البلاغات بالذكاء الاصطناعي",
@@ -101,21 +124,40 @@ translations = {
         "report_details": "تفاصيل البلاغ", "enter_description": "يرجى إدخال وصف البلاغ.",
         "category_result": "التصنيف المتوقع", "priority_result": "الأولوية المتوقعة",
         "identity_details": "تفاصيل الهوية", "identity_exists": "توجد هوية مسجلة بهذا البريد الإلكتروني بالفعل.",
-        "select_status": "اختر الحالة"
+        "select_status": "اختر الحالة", "create_password": "إنشاء كلمة مرور",
+        "confirm_password": "تأكيد كلمة المرور", "password_mismatch": "كلمتا المرور غير متطابقتين.",
+        "password_length": "يجب أن تتكون كلمة المرور من 8 أحرف على الأقل.",
+        "account_created": "تم إنشاء الحساب وتسجيل دخولك.",
+        "my_reports": "بلاغاتي", "login_required": "يرجى تسجيل الدخول لمتابعة خدماتك.",
+        "no_my_reports": "لم تقم بإرسال أي بلاغ حتى الآن.",
+        "welcome": "مرحباً", "login_to_account": "تسجيل الدخول إلى حسابك",
+        "email_exists_no_password": "هذا البريد لديه هوية مسجلة مسبقاً. استخدم تسجيل الدخول أو تواصل مع المسؤول لإعداد الدخول.",
+        "report_owner_note": "سيتم ربط البلاغ بهويتك الرقمية.",
+        "report_saved": "تم حفظ البلاغ وربطه بحسابك.",
+        "identity_created_at": "تاريخ إنشاء الهوية", "account": "الحساب",
+        "identity_registration_note": "أنشئ حساباً للحصول على هوية رقمية ومتابعة بلاغاتك.",
+        "logout_account": "تسجيل الخروج من الحساب", "status_tracking": "متابعة حالة البلاغ"
     }
 }
+
+# =====================================================
+# LANGUAGE
+# =====================================================
 
 if "language" not in st.session_state:
     st.session_state.language = "English"
 
-language = st.sidebar.selectbox(
+st.session_state.language = st.sidebar.selectbox(
     "🌐 Language / اللغة", ["English", "العربية"],
     index=0 if st.session_state.language == "English" else 1
 )
-st.session_state.language = language
 
 def t(key):
     return translations[st.session_state.language].get(key, key)
+
+# =====================================================
+# DATABASE AND MIGRATIONS
+# =====================================================
 
 def get_connection():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
@@ -123,6 +165,7 @@ def get_connection():
 def initialize_database():
     conn = get_connection()
     cur = conn.cursor()
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS identities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,13 +173,16 @@ def initialize_database():
             full_name TEXT NOT NULL,
             email TEXT NOT NULL UNIQUE,
             user_type TEXT,
+            password_hash TEXT DEFAULT '',
             created_at TEXT
         )
     """)
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             report_code TEXT UNIQUE,
+            identity_code TEXT DEFAULT '',
             category TEXT,
             description TEXT,
             location TEXT,
@@ -147,6 +193,16 @@ def initialize_database():
             created_at TEXT
         )
     """)
+
+    # Add new columns to databases created by earlier versions.
+    identity_columns = [row[1] for row in cur.execute("PRAGMA table_info(identities)").fetchall()]
+    if "password_hash" not in identity_columns:
+        cur.execute("ALTER TABLE identities ADD COLUMN password_hash TEXT DEFAULT ''")
+
+    report_columns = [row[1] for row in cur.execute("PRAGMA table_info(reports)").fetchall()]
+    if "identity_code" not in report_columns:
+        cur.execute("ALTER TABLE reports ADD COLUMN identity_code TEXT DEFAULT ''")
+
     conn.commit()
     conn.close()
 
@@ -164,6 +220,27 @@ def load_identities():
     conn.close()
     return df
 
+# =====================================================
+# PASSWORD HELPERS
+# =====================================================
+
+def hash_password(password, salt=None):
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200000)
+    return salt + "$" + digest.hex()
+
+def verify_password(password, stored_hash):
+    try:
+        salt, expected = stored_hash.split("$", 1)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200000).hex()
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, AttributeError):
+        return False
+
+# =====================================================
+# CLASSIFICATION AND QR
+# =====================================================
+
 def analyze_report(description):
     text = description.lower()
     categories = {
@@ -177,10 +254,8 @@ def analyze_report(description):
         if any(word in text for word in keywords):
             category = name
             break
-    urgent_words = [
-        "urgent", "emergency", "danger", "fire", "explosion", "accident", "serious",
-        "عاجل", "طوارئ", "خطير", "حريق", "انفجار", "حادث", "خطر"
-    ]
+    urgent_words = ["urgent", "emergency", "danger", "fire", "explosion", "accident",
+                    "عاجل", "طوارئ", "خطير", "حريق", "انفجار", "حادث", "خطر"]
     priority = "Urgent" if any(word in text for word in urgent_words) else "Normal"
     return category, priority
 
@@ -195,19 +270,19 @@ def generate_qr(data):
     return buffer
 
 def translate_category(category):
-    mapping = {
-        "Electricity": "electricity", "Water": "water", "Cleaning": "cleaning",
-        "Roads": "roads", "Other": "other_category"
-    }
+    mapping = {"Electricity": "electricity", "Water": "water", "Cleaning": "cleaning",
+               "Roads": "roads", "Other": "other_category"}
     return t(mapping.get(category, "other_category"))
 
 def translate_status(status):
-    mapping = {"Pending": "pending", "In Progress": "in_progress", "Resolved": "resolved"}
-    return t(mapping.get(status, "pending"))
+    return t({"Pending": "pending", "In Progress": "in_progress", "Resolved": "resolved"}.get(status, "pending"))
 
 def translate_priority(priority):
-    mapping = {"Normal": "normal", "Urgent": "urgent"}
-    return t(mapping.get(priority, "normal"))
+    return t({"Normal": "normal", "Urgent": "urgent"}.get(priority, "normal"))
+
+# =====================================================
+# BASIC STYLE
+# =====================================================
 
 st.markdown("""
 <style>
@@ -230,26 +305,49 @@ st.title("🌍 " + t("app_title"))
 st.caption(t("subtitle"))
 st.divider()
 
-pages = [
-    "dashboard", "submit_report", "manage_reports", "digital_identities",
-    "verify_identity", "city_map", "ai_intelligence"
-]
+# =====================================================
+# NAVIGATION
+# =====================================================
+
+pages = ["dashboard", "submit_report", "my_services", "manage_reports",
+         "digital_identities", "verify_identity", "city_map", "ai_intelligence"]
 page_labels = [t(page) for page in pages]
 selected_label = st.sidebar.radio(t("navigation"), page_labels)
 selected_page = pages[page_labels.index(selected_label)]
+
+# =====================================================
+# SESSION ACCOUNT HELPERS
+# =====================================================
+
+def current_identity():
+    identity_code = st.session_state.get("citizen_identity_code")
+    if not identity_code:
+        return None
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT identity_code, full_name, email, user_type, created_at
+        FROM identities WHERE identity_code = ?
+    """, (identity_code,))
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+# =====================================================
+# DASHBOARD
+# =====================================================
 
 if selected_page == "dashboard":
     st.header("📊 " + t("overview"))
     reports = load_reports()
     identities = load_identities()
-    total_reports = len(reports)
     pending_count = len(reports[reports["status"] == "Pending"]) if not reports.empty else 0
     resolved_count = len(reports[reports["status"] == "Resolved"]) if not reports.empty else 0
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric(t("total_reports"), total_reports)
-    col2.metric(t("pending_reports"), pending_count)
-    col3.metric(t("resolved_reports"), resolved_count)
-    col4.metric(t("registered_identities"), len(identities))
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(t("total_reports"), len(reports))
+    c2.metric(t("pending_reports"), pending_count)
+    c3.metric(t("resolved_reports"), resolved_count)
+    c4.metric(t("registered_identities"), len(identities))
     st.divider()
     if not reports.empty:
         left, right = st.columns(2)
@@ -258,68 +356,231 @@ if selected_page == "dashboard":
             chart = reports["category"].value_counts().reset_index()
             chart.columns = ["Category", "Count"]
             chart["Category"] = chart["Category"].apply(translate_category)
-            fig = px.pie(chart, names="Category", values="Count", hole=0.4)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(px.pie(chart, names="Category", values="Count", hole=0.4), use_container_width=True)
         with right:
             st.subheader(t("reports_by_status"))
             chart = reports["status"].value_counts().reset_index()
             chart.columns = ["Status", "Count"]
             chart["Status"] = chart["Status"].apply(translate_status)
-            fig = px.bar(chart, x="Status", y="Count", color="Status")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(px.bar(chart, x="Status", y="Count", color="Status"), use_container_width=True)
         st.subheader(t("recent_reports"))
-        display_reports = reports.head(5).copy()
-        for col, func in [
-            ("category", translate_category), ("status", translate_status),
-            ("priority", translate_priority)
-        ]:
-            display_reports[col] = display_reports[col].apply(func)
-        st.dataframe(display_reports[
-            ["report_code", "category", "location", "priority", "status", "created_at"]
-        ], use_container_width=True, hide_index=True)
+        recent = reports.head(5).copy()
+        for column, function in [("category", translate_category), ("status", translate_status), ("priority", translate_priority)]:
+            recent[column] = recent[column].apply(function)
+        st.dataframe(recent[["report_code", "category", "location", "priority", "status", "created_at"]],
+                     use_container_width=True, hide_index=True)
     else:
         st.info(t("no_reports"))
 
-elif selected_page == "submit_report":
-    st.header("📝 " + t("report_title"))
-    with st.form("report_form"):
+# =====================================================
+# CREATE DIGITAL IDENTITY / ACCOUNT
+# =====================================================
+
+elif selected_page == "digital_identities":
+    st.header("🪪 " + t("identity_title"))
+    st.info(t("identity_registration_note"))
+    with st.form("identity_form"):
         full_name = st.text_input(t("full_name"))
-        email = st.text_input(t("email"))
-        location = st.text_input(t("location"))
-        category_options = ["Electricity", "Water", "Cleaning", "Roads", "Other"]
-        category = st.selectbox(t("category"), category_options, format_func=translate_category)
-        description = st.text_area(t("description"))
-        col1, col2 = st.columns(2)
-        with col1:
-            latitude = st.number_input(t("latitude"), value=15.5000, format="%.6f")
-        with col2:
-            longitude = st.number_input(t("longitude"), value=32.5000, format="%.6f")
-        submitted = st.form_submit_button(t("submit"))
+        email = st.text_input(t("email")).strip().lower()
+        user_types = ["Citizen", "Student", "Employee", "Other"]
+        user_type = st.selectbox(t("user_type"), user_types, format_func=lambda value: t(value.lower()))
+        password = st.text_input(t("create_password"), type="password")
+        confirm_password = st.text_input(t("confirm_password"), type="password")
+        submitted = st.form_submit_button(t("create_identity"))
+
     if submitted:
-        if full_name.strip() and email.strip() and location.strip() and description.strip():
-            predicted_category, priority = analyze_report(description)
-            final_category = predicted_category if category == "Other" else category
-            report_code = str(uuid.uuid4())
+        if not full_name.strip() or not email or not password:
+            st.error(t("report_error"))
+        elif len(password) < 8:
+            st.error(t("password_length"))
+        elif password != confirm_password:
+            st.error(t("password_mismatch"))
+        else:
             conn = get_connection()
             cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO reports (
-                    report_code, category, description, location, latitude,
-                    longitude, priority, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                report_code, final_category, description, location, latitude,
-                longitude, priority, "Pending", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            ))
-            conn.commit()
-            conn.close()
-            st.success(t("report_success"))
-            st.write("**" + t("report_code") + ":**")
-            st.code(report_code)
-            st.write(f"**{t('category')}:** {translate_category(final_category)}")
-            st.write(f"**{t('priority')}:** {translate_priority(priority)}")
+            cur.execute("SELECT id, password_hash FROM identities WHERE email = ?", (email,))
+            existing = cur.fetchone()
+            if existing:
+                st.warning(t("identity_exists"))
+                conn.close()
+            else:
+                identity_code = str(uuid.uuid4())
+                cur.execute("""
+                    INSERT INTO identities (identity_code, full_name, email, user_type, password_hash, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (identity_code, full_name.strip(), email, user_type, hash_password(password),
+                      datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                conn.commit()
+                conn.close()
+                st.session_state["citizen_identity_code"] = identity_code
+                st.session_state["new_identity_code"] = identity_code
+                st.success(t("identity_success"))
+                st.success(t("account_created"))
+
+    if st.session_state.get("new_identity_code"):
+        code = st.session_state["new_identity_code"]
+        st.write("**" + t("identity_code") + ":**")
+        st.code(code)
+        qr_buffer = generate_qr(code)
+        st.image(qr_buffer, caption=t("identity_code"), width=190)
+        st.download_button("Download QR Code", data=qr_buffer.getvalue(),
+                           file_name="digital_identity_qr.png", mime="image/png")
+
+    st.divider()
+    st.subheader(t("identity_list"))
+    identities = load_identities()
+    if identities.empty:
+        st.info(t("no_identities"))
+    else:
+        public_data = identities[["full_name", "email", "user_type", "created_at"]].copy()
+        public_data["user_type"] = public_data["user_type"].apply(lambda value: t(value.lower()) if value else "")
+        public_data.columns = [t("full_name"), t("email"), t("user_type"), t("created_at")]
+        st.dataframe(public_data, use_container_width=True, hide_index=True)
+
+# =====================================================
+# MY SERVICES / LOGIN / MY REPORTS
+# =====================================================
+
+elif selected_page == "my_services":
+    st.header("👤 " + t("my_services"))
+    identity = current_identity()
+
+    if identity:
+        st.success(f"{t('welcome')}, {identity[1]}")
+        st.write(f"**{t('email')}:** {identity[2]}")
+        st.write(f"**{t('identity_code')}:**")
+        st.code(identity[0])
+        if st.button(t("logout_account")):
+            st.session_state.pop("citizen_identity_code", None)
+            st.rerun()
+
+        st.divider()
+        st.subheader("📋 " + t("my_reports"))
+        conn = get_connection()
+        my_reports = pd.read_sql_query(
+            "SELECT report_code, category, description, location, priority, status, created_at "
+            "FROM reports WHERE identity_code = ? ORDER BY id DESC",
+            conn, params=(identity[0],)
+        )
+        conn.close()
+
+        if my_reports.empty:
+            st.info(t("no_my_reports"))
         else:
-            st.error(t("report_error"))
+            for _, report in my_reports.iterrows():
+                with st.expander(f"{translate_category(report['category'])} — {report['report_code'][:8]}"):
+                    st.write(f"**{t('description')}:** {report['description']}")
+                    st.write(f"**{t('location')}:** {report['location']}")
+                    st.write(f"**{t('priority')}:** {translate_priority(report['priority'])}")
+                    st.write(f"**{t('status_tracking')}:** {translate_status(report['status'])}")
+                    st.write(f"**{t('created_at')}:** {report['created_at']}")
+                    st.write(f"**{t('report_code')}:** `{report['report_code']}`")
+    else:
+        st.info(t("login_required"))
+        st.subheader(t("login_to_account"))
+        with st.form("citizen_login_form"):
+            login_email = st.text_input(t("email")).strip().lower()
+            login_password = st.text_input(t("password"), type="password")
+            login_clicked = st.form_submit_button(t("login"))
+        if login_clicked:
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT identity_code, password_hash FROM identities WHERE email = ?", (login_email,))
+            account = cur.fetchone()
+            conn.close()
+            if account and account[1] and verify_password(login_password, account[1]):
+                st.session_state["citizen_identity_code"] = account[0]
+                st.success(t("account_created"))
+                st.rerun()
+            else:
+                st.error(t("wrong_password"))
+        st.caption(t("identity_registration_note"))
+
+# =====================================================
+# SUBMIT REPORT (SIGNED-IN CITIZEN)
+# =====================================================
+
+elif selected_page == "submit_report":
+    st.header("📝 " + t("report_title"))
+    identity = current_identity()
+    if not identity:
+        st.warning(t("login_required"))
+        st.info("Open " + t("my_services") + " and log in, or create a digital identity first.")
+    else:
+        st.success(f"{t('welcome')}, {identity[1]}")
+        st.caption(t("report_owner_note"))
+
+        # Let the browser obtain the citizen's current GPS coordinates.
+        # The user must explicitly press the component button and allow permission.
+        st.subheader("📍 " + ("حدد موقعك الحالي" if st.session_state.language == "العربية" else "Detect my current location"))
+        st.caption(
+            "اضغط على زر تحديد الموقع واسمح للمتصفح بالوصول إلى موقعك. يمكنك تعديل الإحداثيات يدوياً إذا لزم الأمر."
+            if st.session_state.language == "العربية" else
+            "Press the location button and allow your browser to access your location. You can still edit the coordinates manually."
+        )
+        try:
+            detected_location = streamlit_geolocation()
+        except Exception as location_error:
+            detected_location = None
+            st.warning(
+                "تعذر تشغيل خدمة تحديد الموقع. يمكنك إدخال الإحداثيات يدوياً."
+                if st.session_state.language == "العربية" else
+                "The location service could not be loaded. You can enter coordinates manually."
+            )
+
+        if isinstance(detected_location, dict) and detected_location.get("latitude") is not None and detected_location.get("longitude") is not None:
+            st.session_state["report_latitude"] = float(detected_location["latitude"])
+            st.session_state["report_longitude"] = float(detected_location["longitude"])
+            st.session_state["report_location_detected"] = True
+            st.success(
+                "تم تحديد موقعك بنجاح." if st.session_state.language == "العربية" else
+                "Your location was detected successfully."
+            )
+            accuracy = detected_location.get("accuracy")
+            if accuracy is not None:
+                st.caption(("دقة الموقع التقريبية: " if st.session_state.language == "العربية" else "Approximate location accuracy: ") + f"{accuracy:.0f} m")
+
+        default_lat = float(st.session_state.get("report_latitude", 15.5000))
+        default_lon = float(st.session_state.get("report_longitude", 32.5000))
+        with st.form("report_form"):
+            location = st.text_input(t("location"))
+            category_options = ["Electricity", "Water", "Cleaning", "Roads", "Other"]
+            category = st.selectbox(t("category"), category_options, format_func=translate_category)
+            description = st.text_area(t("description"))
+            c1, c2 = st.columns(2)
+            with c1:
+                latitude = st.number_input(t("latitude"), value=default_lat, format="%.6f")
+            with c2:
+                longitude = st.number_input(t("longitude"), value=default_lon, format="%.6f")
+            submitted = st.form_submit_button(t("submit"))
+        if submitted:
+            if location.strip() and description.strip():
+                predicted_category, priority = analyze_report(description)
+                final_category = predicted_category if category == "Other" else category
+                report_code = str(uuid.uuid4())
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO reports (report_code, identity_code, category, description, location,
+                                         latitude, longitude, priority, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (report_code, identity[0], final_category, description, location,
+                      latitude, longitude, priority, "Pending",
+                      datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                conn.commit()
+                conn.close()
+                st.success(t("report_saved"))
+                st.write(f"**{t('report_code')}:**")
+                st.code(report_code)
+                st.write(f"**{t('category')}:** {translate_category(final_category)}")
+                st.write(f"**{t('priority')}:** {translate_priority(priority)}")
+                st.info("Open " + t("my_services") + " to track this report.")
+            else:
+                st.error(t("report_error"))
+
+# =====================================================
+# ADMIN REPORT MANAGEMENT
+# =====================================================
 
 elif selected_page == "manage_reports":
     st.header("⚙️ " + t("manage_title"))
@@ -334,34 +595,34 @@ elif selected_page == "manage_reports":
         if not admin_password:
             st.warning(t("password_not_set"))
         entered_password = st.text_input(t("password"), type="password")
-        if st.button(t("login")):
+        if st.button(t("login"), key="admin_login_button"):
             if admin_password and hmac.compare_digest(entered_password, admin_password):
                 st.session_state.admin_logged_in = True
-                st.success(t("admin_access"))
                 st.rerun()
             else:
                 st.error(t("wrong_password"))
     else:
-        st.success(t("admin_access"))
-        if st.button(t("logout")):
+        if st.button(t("logout"), key="admin_logout_button"):
             st.session_state.admin_logged_in = False
             st.rerun()
         reports = load_reports()
-        if not reports.empty:
+        if reports.empty:
+            st.info(t("no_reports"))
+        else:
             st.subheader(t("report_details"))
             for _, row in reports.iterrows():
-                with st.expander(f"{row['report_code'][:8]} - {translate_category(row['category'])}"):
+                with st.expander(f"{row['report_code'][:8]} — {translate_category(row['category'])}"):
                     st.write(f"**{t('description')}:** {row['description']}")
                     st.write(f"**{t('location')}:** {row['location']}")
                     st.write(f"**{t('priority')}:** {translate_priority(row['priority'])}")
                     st.write(f"**{t('status')}:** {translate_status(row['status'])}")
-                    status_options = ["Pending", "In Progress", "Resolved"]
-                    new_status = st.selectbox(
-                        t("select_status"), status_options,
-                        index=status_options.index(row["status"]),
-                        format_func=translate_status, key=f"status_{row['id']}"
-                    )
-                    if st.button(t("update"), key=f"update_{row['id']}"):
+                    st.write(f"**{t('identity_code')}:** {row.get('identity_code', '')}")
+                    statuses = ["Pending", "In Progress", "Resolved"]
+                    new_status = st.selectbox(t("select_status"), statuses,
+                                              index=statuses.index(row["status"]),
+                                              format_func=translate_status,
+                                              key=f"report_status_{row['id']}")
+                    if st.button(t("update"), key=f"save_status_{row['id']}"):
                         conn = get_connection()
                         cur = conn.cursor()
                         cur.execute("UPDATE reports SET status = ? WHERE id = ?", (new_status, row["id"]))
@@ -369,113 +630,36 @@ elif selected_page == "manage_reports":
                         conn.close()
                         st.success(t("updated"))
                         st.rerun()
-            csv_data = reports.to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                label=t("download"), data=csv_data,
-                file_name="smart_nation_reports.csv", mime="text/csv"
-            )
-        else:
-            st.info(t("no_reports"))
+            st.download_button(t("download"), data=reports.to_csv(index=False).encode("utf-8-sig"),
+                               file_name="smart_nation_reports.csv", mime="text/csv")
 
-elif selected_page == "digital_identities":
-    st.header("🪪 " + t("identity_title"))
-
-    # IMPORTANT: the form ends before QR display/download buttons.
-    with st.form("identity_form"):
-        full_name = st.text_input(t("full_name"))
-        email = st.text_input(t("email"))
-        user_types = ["Citizen", "Student", "Employee", "Other"]
-        user_type = st.selectbox(
-            t("user_type"), user_types,
-            format_func=lambda x: t(x.lower())
-        )
-        submitted = st.form_submit_button(t("create_identity"))
-
-    if submitted:
-        if full_name.strip() and email.strip():
-            conn = get_connection()
-            cur = conn.cursor()
-            cur.execute("SELECT id FROM identities WHERE email = ?", (email.strip(),))
-            existing = cur.fetchone()
-
-            if existing:
-                st.warning(t("identity_exists"))
-                conn.close()
-            else:
-                identity_code = str(uuid.uuid4())
-                cur.execute("""
-                    INSERT INTO identities (
-                        identity_code, full_name, email, user_type, created_at
-                    ) VALUES (?, ?, ?, ?, ?)
-                """, (
-                    identity_code, full_name.strip(), email.strip(), user_type,
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                ))
-                conn.commit()
-                conn.close()
-
-                st.session_state["new_identity_code"] = identity_code
-                st.success(t("identity_success"))
-        else:
-            st.error(t("report_error"))
-
-    # Show QR and download button OUTSIDE the form.
-    if st.session_state.get("new_identity_code"):
-        identity_code = st.session_state["new_identity_code"]
-        st.write("**" + t("identity_code") + ":**")
-        st.code(identity_code)
-        qr_image = generate_qr(identity_code)
-        st.image(qr_image, caption=t("identity_code"), width=200)
-        st.download_button(
-            label="Download QR Code",
-            data=qr_image.getvalue(),
-            file_name="digital_identity_qr.png",
-            mime="image/png"
-        )
-
-    st.divider()
-    st.subheader(t("identity_list"))
-    identities = load_identities()
-    if not identities.empty:
-        display_identities = identities.copy()
-        display_identities["user_type"] = display_identities["user_type"].apply(
-            lambda x: t(x.lower()) if x else ""
-        )
-        display_identities = display_identities.rename(columns={
-            "full_name": t("full_name"), "email": t("email"),
-            "user_type": t("user_type"), "created_at": t("created_at")
-        })
-        st.dataframe(display_identities[
-            [t("full_name"), t("email"), t("user_type"), t("created_at")]
-        ], use_container_width=True, hide_index=True)
-    else:
-        st.info(t("no_identities"))
+# =====================================================
+# VERIFY IDENTITY
+# =====================================================
 
 elif selected_page == "verify_identity":
     st.header("🔍 " + t("verify_title"))
     identity_code = st.text_input(t("enter_code"))
     if st.button(t("verify")):
-        if identity_code.strip():
-            conn = get_connection()
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT full_name, email, user_type, created_at
-                FROM identities WHERE identity_code = ?
-            """, (identity_code.strip(),))
-            result = cur.fetchone()
-            conn.close()
-            if result:
-                st.success(t("valid_identity"))
-                st.subheader(t("identity_details"))
-                st.write(f"**{t('full_name')}:** {result[0]}")
-                st.write(f"**{t('email')}:** {result[1]}")
-                user_type_text = t(result[2].lower()) if result[2] else ""
-                st.write(f"**{t('user_type')}:** {user_type_text}")
-                st.write(f"**{t('created_at')}:** {result[3]}")
-            else:
-                st.error(t("invalid_identity"))
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT full_name, email, user_type, created_at FROM identities WHERE identity_code = ?",
+                    (identity_code.strip(),))
+        result = cur.fetchone()
+        conn.close()
+        if result:
+            st.success(t("valid_identity"))
+            st.subheader(t("identity_details"))
+            st.write(f"**{t('full_name')}:** {result[0]}")
+            st.write(f"**{t('email')}:** {result[1]}")
+            st.write(f"**{t('user_type')}:** {t(result[2].lower()) if result[2] else ''}")
+            st.write(f"**{t('created_at')}:** {result[3]}")
         else:
-            st.warning(t("enter_code"))
+            st.error(t("invalid_identity"))
+
+# =====================================================
+# CITY MAP
+# =====================================================
 
 elif selected_page == "city_map":
     st.header("🗺️ " + t("map_title"))
@@ -484,16 +668,16 @@ elif selected_page == "city_map":
         map_data = reports.dropna(subset=["latitude", "longitude"])
         if not map_data.empty:
             st.map(map_data.rename(columns={"latitude": "lat", "longitude": "lon"})[["lat", "lon"]])
-            st.subheader(t("report_details"))
             for _, row in map_data.iterrows():
-                st.write(
-                    f"📍 **{row['location']}** — {translate_category(row['category'])} — "
-                    f"{translate_status(row['status'])}"
-                )
+                st.write(f"📍 **{row['location']}** — {translate_category(row['category'])} — {translate_status(row['status'])}")
         else:
             st.info(t("map_empty"))
     else:
         st.info(t("map_empty"))
+
+# =====================================================
+# AI INTELLIGENCE
+# =====================================================
 
 elif selected_page == "ai_intelligence":
     st.header("🤖 " + t("ai_title"))
@@ -502,26 +686,21 @@ elif selected_page == "ai_intelligence":
     if st.button(t("analyze")):
         if description.strip():
             category, priority = analyze_report(description)
-            st.subheader(t("analysis_result"))
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric(t("category_result"), translate_category(category))
-            with col2:
-                st.metric(t("priority_result"), translate_priority(priority))
-            st.success(f"{t('category')}: {translate_category(category)}")
-            st.info(f"{t('priority')}: {translate_priority(priority)}")
+            c1, c2 = st.columns(2)
+            c1.metric(t("category_result"), translate_category(category))
+            c2.metric(t("priority_result"), translate_priority(priority))
         else:
             st.warning(t("enter_description"))
     st.divider()
     st.caption("ℹ️ " + t("classification_note"))
 
+# =====================================================
+# FOOTER
+# =====================================================
+
 st.divider()
 st.markdown(
-    f"""
-    <div style="text-align:center; color:gray; padding:15px;">
-        🌍 {t("footer")}<br>
-        <small>Smart Nation Prototype</small>
-    </div>
-    """,
+    f"""<div style="text-align:center; color:gray; padding:15px;">
+    🌍 {t("footer")}<br><small>Smart Nation Prototype</small></div>""",
     unsafe_allow_html=True
 )
