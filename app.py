@@ -723,4 +723,456 @@ elif selected_page == "submit_report":
                 st.code(report_code)
 
                 st.write(
-                    f"**{t('category')}:
+                    f"**{t('category')}:** "
+                    f"{translate_category(final_category)}"
+                )
+
+                st.write(
+                    f"**{t('priority')}:** "
+                    f"{translate_priority(priority)}"
+                )
+
+            else:
+                st.error(t("report_error"))
+
+
+# =====================================================
+# MANAGE REPORTS
+# =====================================================
+
+elif selected_page == "manage_reports":
+
+    st.header("⚙️ " + t("manage_title"))
+
+    if "admin_logged_in" not in st.session_state:
+        st.session_state.admin_logged_in = False
+
+    if not st.session_state.admin_logged_in:
+
+        st.subheader(t("admin_login"))
+
+        try:
+            admin_password = st.secrets.get("ADMIN_PASSWORD", "")
+        except Exception:
+            admin_password = os.environ.get("ADMIN_PASSWORD", "")
+
+        if not admin_password:
+            st.warning(t("password_not_set"))
+
+        entered_password = st.text_input(
+            t("password"),
+            type="password"
+        )
+
+        if st.button(t("login")):
+
+            if (
+                admin_password
+                and hmac.compare_digest(
+                    entered_password,
+                    admin_password
+                )
+            ):
+
+                st.session_state.admin_logged_in = True
+                st.success(t("admin_access"))
+                st.rerun()
+
+            else:
+                st.error(t("wrong_password"))
+
+    else:
+
+        st.success(t("admin_access"))
+
+        if st.button(t("logout")):
+            st.session_state.admin_logged_in = False
+            st.rerun()
+
+        reports = load_reports()
+
+        if not reports.empty:
+
+            st.subheader(t("report_details"))
+
+            for _, row in reports.iterrows():
+
+                with st.expander(
+                    f"{row['report_code'][:8]} - "
+                    f"{translate_category(row['category'])}"
+                ):
+
+                    st.write(
+                        f"**{t('description')}:** "
+                        f"{row['description']}"
+                    )
+
+                    st.write(
+                        f"**{t('location')}:** "
+                        f"{row['location']}"
+                    )
+
+                    st.write(
+                        f"**{t('priority')}:** "
+                        f"{translate_priority(row['priority'])}"
+                    )
+
+                    st.write(
+                        f"**{t('status')}:** "
+                        f"{translate_status(row['status'])}"
+                    )
+
+                    status_options = [
+                        "Pending",
+                        "In Progress",
+                        "Resolved"
+                    ]
+
+                    new_status = st.selectbox(
+                        t("select_status"),
+                        status_options,
+                        index=status_options.index(row["status"]),
+                        format_func=translate_status,
+                        key=f"status_{row['id']}"
+                    )
+
+                    if st.button(
+                        t("update"),
+                        key=f"update_{row['id']}"
+                    ):
+
+                        conn = get_connection()
+                        cursor = conn.cursor()
+
+                        cursor.execute(
+                            "UPDATE reports SET status = ? WHERE id = ?",
+                            (new_status, row["id"])
+                        )
+
+                        conn.commit()
+                        conn.close()
+
+                        st.success(t("updated"))
+                        st.rerun()
+
+            csv_data = reports.to_csv(index=False).encode("utf-8-sig")
+
+            st.download_button(
+                label=t("download"),
+                data=csv_data,
+                file_name="smart_nation_reports.csv",
+                mime="text/csv"
+            )
+
+        else:
+            st.info(t("no_reports"))
+
+
+# =====================================================
+# DIGITAL IDENTITIES
+# =====================================================
+
+elif selected_page == "digital_identities":
+
+    st.header("🪪 " + t("identity_title"))
+
+    with st.form("identity_form"):
+
+        full_name = st.text_input(t("full_name"))
+
+        email = st.text_input(t("email"))
+
+        user_types = [
+            "Citizen",
+            "Student",
+            "Employee",
+            "Other"
+        ]
+
+        user_type = st.selectbox(
+            t("user_type"),
+            user_types,
+            format_func=lambda x: t(x.lower())
+        )
+
+        submitted = st.form_submit_button(
+            t("create_identity")
+        )
+
+        if submitted:
+
+            if full_name.strip() and email.strip():
+
+                conn = get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute(
+                    "SELECT id FROM identities WHERE email = ?",
+                    (email.strip(),)
+                )
+
+                existing = cursor.fetchone()
+
+                if existing:
+
+                    st.warning(t("identity_exists"))
+
+                else:
+
+                    identity_code = str(uuid.uuid4())
+
+                    cursor.execute("""
+                        INSERT INTO identities (
+                            identity_code,
+                            full_name,
+                            email,
+                            user_type,
+                            created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        identity_code,
+                        full_name.strip(),
+                        email.strip(),
+                        user_type,
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ))
+
+                    conn.commit()
+
+                    st.success(t("identity_success"))
+
+                    st.write("**" + t("identity_code") + ":**")
+                    st.code(identity_code)
+
+                    qr_image = generate_qr(identity_code)
+
+                    st.image(
+                        qr_image,
+                        caption=t("identity_code"),
+                        width=200
+                    )
+
+                    st.download_button(
+                        label="Download QR Code",
+                        data=qr_image.getvalue(),
+                        file_name="digital_identity_qr.png",
+                        mime="image/png"
+                    )
+
+                conn.close()
+
+            else:
+                st.error(t("report_error"))
+
+    st.divider()
+
+    st.subheader(t("identity_list"))
+
+    identities = load_identities()
+
+    if not identities.empty:
+
+        display_identities = identities.copy()
+
+        display_identities["user_type"] = (
+            display_identities["user_type"].apply(
+                lambda x: t(x.lower()) if x else ""
+            )
+        )
+
+        display_identities = display_identities.rename(
+            columns={
+                "full_name": t("full_name"),
+                "email": t("email"),
+                "user_type": t("user_type"),
+                "created_at": t("created_at")
+            }
+        )
+
+        st.dataframe(
+            display_identities[
+                [
+                    t("full_name"),
+                    t("email"),
+                    t("user_type"),
+                    t("created_at")
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True
+        )
+
+    else:
+        st.info(t("no_identities"))
+
+
+# =====================================================
+# VERIFY IDENTITY
+# =====================================================
+
+elif selected_page == "verify_identity":
+
+    st.header("🔍 " + t("verify_title"))
+
+    identity_code = st.text_input(t("enter_code"))
+
+    if st.button(t("verify")):
+
+        if identity_code.strip():
+
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT full_name, email, user_type, created_at
+                FROM identities
+                WHERE identity_code = ?
+            """, (identity_code.strip(),))
+
+            result = cursor.fetchone()
+
+            conn.close()
+
+            if result:
+
+                st.success(t("valid_identity"))
+
+                st.subheader(t("identity_details"))
+
+                st.write(f"**{t('full_name')}:** {result[0]}")
+                st.write(f"**{t('email')}:** {result[1]}")
+
+                user_type_text = (
+                    t(result[2].lower())
+                    if result[2] else ""
+                )
+
+                st.write(
+                    f"**{t('user_type')}:** {user_type_text}"
+                )
+
+                st.write(
+                    f"**{t('created_at')}:** {result[3]}"
+                )
+
+            else:
+                st.error(t("invalid_identity"))
+
+        else:
+            st.warning(t("enter_code"))
+
+
+# =====================================================
+# CITY MAP
+# =====================================================
+
+elif selected_page == "city_map":
+
+    st.header("🗺️ " + t("map_title"))
+
+    reports = load_reports()
+
+    if not reports.empty:
+
+        map_data = reports.dropna(
+            subset=["latitude", "longitude"]
+        )
+
+        if not map_data.empty:
+
+            st.map(
+                map_data.rename(
+                    columns={
+                        "latitude": "lat",
+                        "longitude": "lon"
+                    }
+                )[["lat", "lon"]]
+            )
+
+            st.subheader(t("report_details"))
+
+            for _, row in map_data.iterrows():
+
+                st.write(
+                    f"📍 **{row['location']}** — "
+                    f"{translate_category(row['category'])} — "
+                    f"{translate_status(row['status'])}"
+                )
+
+        else:
+            st.info(t("map_empty"))
+
+    else:
+        st.info(t("map_empty"))
+
+
+# =====================================================
+# AI INTELLIGENCE
+# =====================================================
+
+elif selected_page == "ai_intelligence":
+
+    st.header("🤖 " + t("ai_title"))
+
+    st.write(t("ai_description"))
+
+    description = st.text_area(
+        t("description"),
+        height=150
+    )
+
+    if st.button(t("analyze")):
+
+        if description.strip():
+
+            category, priority = analyze_report(description)
+
+            st.subheader(t("analysis_result"))
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.metric(
+                    t("category_result"),
+                    translate_category(category)
+                )
+
+            with col2:
+                st.metric(
+                    t("priority_result"),
+                    translate_priority(priority)
+                )
+
+            st.success(
+                f"{t('category')}: {translate_category(category)}"
+            )
+
+            st.info(
+                f"{t('priority')}: {translate_priority(priority)}"
+            )
+
+        else:
+            st.warning(t("enter_description"))
+
+    st.divider()
+
+    st.caption("ℹ️ " + t("classification_note"))
+
+
+# =====================================================
+# FOOTER
+# =====================================================
+
+st.divider()
+
+st.markdown(
+    f"""
+    <div style="text-align:center; color:gray; padding:15px;">
+        🌍 {t("footer")}
+        <br>
+        <small>Smart Nation Prototype</small>
+    </div>
+    """,
+    unsafe_allow_html=True
+) 
