@@ -9,9 +9,9 @@ import hmac
 from datetime import datetime
 
 
-# =====================================
+# =========================================
 # PAGE CONFIG
-# =====================================
+# =========================================
 
 st.set_page_config(
     page_title="Smart Nation",
@@ -22,462 +22,204 @@ st.set_page_config(
 DB_NAME = "smart_nation.db"
 
 
-# =====================================
-# DATABASE
-# =====================================
-
-def get_db():
-    return sqlite3.connect(DB_NAME)
-
-
-def initialize_database():
-
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS identities (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            identity_code TEXT UNIQUE,
-            full_name TEXT,
-            email TEXT,
-            user_type TEXT,
-            created_at TEXT
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            report_code TEXT UNIQUE,
-            category TEXT,
-            description TEXT,
-            location TEXT,
-            latitude REAL,
-            longitude REAL,
-            priority TEXT,
-            status TEXT,
-            created_at TEXT
-        )
-    """)
-
-    # Compatibility with older database versions
-    identity_columns = [
-        row[1] for row in cursor.execute(
-            "PRAGMA table_info(identities)"
-        ).fetchall()
-    ]
-
-    if "user_type" not in identity_columns:
-        cursor.execute(
-            "ALTER TABLE identities ADD COLUMN user_type TEXT"
-        )
-
-    report_columns = [
-        row[1] for row in cursor.execute(
-            "PRAGMA table_info(reports)"
-        ).fetchall()
-    ]
-
-    if "latitude" not in report_columns:
-        cursor.execute(
-            "ALTER TABLE reports ADD COLUMN latitude REAL"
-        )
-
-    if "longitude" not in report_columns:
-        cursor.execute(
-            "ALTER TABLE reports ADD COLUMN longitude REAL"
-        )
-
-    conn.commit()
-    conn.close()
-
-
-initialize_database()
-
-
-# =====================================
-# CLASSIFICATION
-# =====================================
-
-def analyze_report(description):
-
-    text = description.lower()
-
-    categories = {
-        "Electricity": [
-            "electricity", "power", "light",
-            "كهرباء", "إنارة", "انقطاع"
-        ],
-
-        "Water": [
-            "water", "leak", "pipe",
-            "مياه", "تسريب", "ماسورة"
-        ],
-
-        "Cleaning": [
-            "garbage", "waste", "trash",
-            "نفايات", "قمامة", "نظافة"
-        ],
-
-        "Roads": [
-            "road", "pothole", "street",
-            "asphalt", "شارع", "حفرة",
-            "طريق", "أسفلت"
-        ]
-    }
-
-    detected_category = "General"
-
-    for category, keywords in categories.items():
-
-        if any(word in text for word in keywords):
-            detected_category = category
-            break
-
-    priority = "Normal"
-
-    urgent_keywords = [
-        "urgent", "emergency", "danger",
-        "fire", "explosion", "عاجل",
-        "طوارئ", "خطير", "حريق", "انفجار"
-    ]
-
-    if any(word in text for word in urgent_keywords):
-        priority = "High"
-
-    return detected_category, priority
-
-
-# =====================================
-# QR CODE
-# =====================================
-
-def generate_qr(data):
-
-    qr = qrcode.QRCode(
-        version=1,
-        box_size=10,
-        border=4
-    )
-
-    qr.add_data(data)
-    qr.make(fit=True)
-
-    image = qr.make_image(
-        fill_color="black",
-        back_color="white"
-    )
-
-    output = io.BytesIO()
-    image.save(output, format="PNG")
-
-    return output.getvalue()
-
-
-# =====================================
-# LOAD DATA
-# =====================================
-
-def load_reports():
-
-    conn = get_db()
-
-    df = pd.read_sql_query(
-        "SELECT * FROM reports ORDER BY id DESC",
-        conn
-    )
-
-    conn.close()
-
-    return df
-
-
-def load_identities():
-
-    conn = get_db()
-
-    df = pd.read_sql_query(
-        "SELECT * FROM identities ORDER BY id DESC",
-        conn
-    )
-
-    conn.close()
-
-    return df
-
-
-# =====================================
-# DESIGN
-# =====================================
-
-st.markdown("""
-<style>
-
-.stApp {
-    background-color: #F3F7FA;
-}
-
-h1, h2, h3 {
-    color: #123456;
-}
-
-div[data-testid="stMetric"] {
-    background-color: white;
-    padding: 20px;
-    border-radius: 12px;
-    border: 1px solid #DCE5EC;
-}
-
-.stButton button {
-    background-color: #123456;
-    color: white;
-    border-radius: 8px;
-    border: none;
-}
-
-.stButton button:hover {
-    background-color: #087E8B;
-    color: white;
-}
-
-section[data-testid="stSidebar"] {
-    background-color: #E7EFF5;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-
-# =====================================
-# HEADER
-# =====================================
-
-st.markdown(
-    """
-    <div style="text-align:center;">
-        <h1>🌍 SMART NATION</h1>
-        <p style="color:#64748b;font-size:18px;">
-            Integrated Digital Transformation Platform
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-st.divider()
-
-
-# =====================================
-# NAVIGATION
-# =====================================
-
-st.sidebar.title("🌍 Smart Nation Portal")
-
-menu = st.sidebar.selectbox(
-    "Navigation",
-    [
-        "Dashboard & Analytics",
-        "Submit Report",
-        "Manage Reports",
-        "Digital Identities",
-        "Verify Identity",
-        "City Map",
-        "AI Intelligence"
-    ]
-)
-
-
-# =====================================
-# 1. DASHBOARD
-# =====================================
-
-if menu == "Dashboard & Analytics":
-
-    st.title("📊 Smart Nation Dashboard")
-
-    st.write(
-        "Monitor civic reports, infrastructure status, "
-        "and digital identity records."
-    )
-
-    reports = load_reports()
-    identities = load_identities()
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("Total Reports", len(reports))
-
-    with col2:
-        resolved = (
-            len(reports[reports["status"] == "Resolved"])
-            if not reports.empty else 0
-        )
-        st.metric("Resolved Issues", resolved)
-
-    with col3:
-        pending = (
-            len(reports[reports["status"] != "Resolved"])
-            if not reports.empty else 0
-        )
-        st.metric("Pending / Active", pending)
-
-    with col4:
-        st.metric("Digital Identities", len(identities))
-
-    st.divider()
-
-    if not reports.empty:
-
-        col_a, col_b = st.columns(2)
-
-        with col_a:
-
-            st.subheader("Reports by Category")
-
-            fig_cat = px.pie(
-                reports,
-                names="category",
-                hole=0.4,
-                color_discrete_sequence=px.colors.qualitative.Set3
-            )
-
-            st.plotly_chart(
-                fig_cat,
-                use_container_width=True
-            )
-
-        with col_b:
-
-            st.subheader("Reports by Status")
-
-            fig_status = px.bar(
-                reports,
-                x="status",
-                color="priority",
-                barmode="group"
-            )
-
-            st.plotly_chart(
-                fig_status,
-                use_container_width=True
-            )
-
-    else:
-
-        st.info("No reports submitted yet.")
-
-
-# =====================================
-# 2. SUBMIT REPORT
-# =====================================
-
-elif menu == "Submit Report":
-
-    st.title("📝 Submit Civic Report")
-
-    st.write(
-        "Report infrastructure issues, sanitation problems, "
-        "or utility failures."
-    )
-
-    with st.form("report_form"):
-
-        description = st.text_area(
-            "Issue Description",
-            placeholder="Describe the problem..."
-        )
-
-        location = st.text_input(
-            "Location Name / Address",
-            placeholder="Enter location..."
-        )
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-
-            latitude = st.number_input(
-                "Latitude",
-                value=15.500000,
-                format="%.6f"
-            )
-
-        with col2:
-
-            longitude = st.number_input(
-                "Longitude",
-                value=32.500000,
-                format="%.6f"
-            )
-
-        submitted = st.form_submit_button(
-            "Submit Report"
-        )
-
-        if submitted:
-
-            if not description.strip() or not location.strip():
-
-                st.error(
-                    "Please enter the description and location."
-                )
-
-            elif not (-90 <= latitude <= 90):
-
-                st.error("Invalid latitude.")
-
-            elif not (-180 <= longitude <= 180):
-
-                st.error("Invalid longitude.")
-
-            else:
-
-                category, priority = analyze_report(
-                    description
-                )
-
-                report_code = str(uuid.uuid4())
-
-                conn = get_db()
-
-                conn.execute("""
-                    INSERT INTO reports (
-                        report_code,
-                        category,
-                        description,
-                        location,
-                        latitude,
-                        longitude,
-                        priority,
-                        status,
-                        created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    report_code,
-                    category,
-                    description.strip(),
-                    location.strip(),
-                    latitude,
-                    longitude,
-                    priority,
-                    "Pending",
-                    datetime.now().strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                ))
-
-                conn.commit()
-                conn.close()
-
-                st.success(
-                    "Report submitted successfully!"
-                )
-
-                st.info(
-                    f"Category: {category} | Priority: {priority}"
+# =========================================
+# TRANSLATIONS
+# =========================================
+
+translations = {
+
+    "English": {
+
+        "portal": "🌍 Smart Nation Portal",
+        "language": "🌐 Language",
+        "dashboard": "Dashboard & Analytics",
+        "submit": "Submit Report",
+        "manage": "Manage Reports",
+        "identities": "Digital Identities",
+        "verify": "Verify Identity",
+        "map": "City Map",
+        "ai": "AI Intelligence",
+
+        "subtitle": "Integrated Digital Transformation Platform",
+        "dashboard_title": "📊 Smart Nation Dashboard",
+        "dashboard_desc": "Monitor civic reports, infrastructure status, and digital identity records.",
+
+        "total_reports": "Total Reports",
+        "resolved": "Resolved Issues",
+        "pending": "Pending / Active",
+        "total_identities": "Digital Identities",
+
+        "category_chart": "Reports by Category",
+        "status_chart": "Reports by Status",
+        "no_reports": "No reports submitted yet.",
+
+        "submit_title": "📝 Submit Civic Report",
+        "submit_desc": "Report infrastructure issues, sanitation problems, or utility failures.",
+        "description": "Issue Description",
+        "description_placeholder": "Describe the problem in detail...",
+        "location": "Location Name / Address",
+        "location_placeholder": "Enter location...",
+        "latitude": "Latitude",
+        "longitude": "Longitude",
+        "submit_button": "Submit Report",
+        "fill_fields": "Please enter the description and location.",
+        "invalid_lat": "Invalid latitude.",
+        "invalid_lon": "Invalid longitude.",
+        "report_success": "Report submitted successfully!",
+        "category": "Category",
+        "priority": "Priority",
+        "report_code": "Report Code",
+
+        "manage_title": "📋 Manage Reports",
+        "admin_not_configured": "Admin password has not been configured.",
+        "admin_password": "Admin Password",
+        "login": "Login",
+        "incorrect_password": "Incorrect password.",
+        "admin_granted": "Admin access granted.",
+        "select_report": "Select Report ID",
+        "update_status": "Update Report Status",
+        "save_update": "Save Update",
+        "report_updated": "Report updated successfully.",
+        "download_csv": "Download Reports CSV",
+        "no_reports_available": "No reports available.",
+        "logout": "Logout",
+
+        "identities_title": "🪪 Digital Identity",
+        "identity_desc": "Create a digital identity and generate a QR code.",
+        "full_name": "Full Name",
+        "email": "Email Address",
+        "user_type": "User Type",
+        "citizen": "Citizen",
+        "student": "Student",
+        "employee": "Employee",
+        "create_identity": "Create Identity",
+        "fill_identity": "Please fill in all fields.",
+        "invalid_email": "Enter a valid email address.",
+        "duplicate_email": "This email already has a registered identity.",
+        "identity_success": "Digital identity created successfully!",
+        "identity_code": "Identity Code",
+        "download_qr": "Download QR Code",
+        "qr_caption": "Digital Identity QR Code",
+        "registered_identities": "Registered Identities",
+        "no_identities": "No identities registered.",
+
+        "verify_title": "🔍 Verify Digital Identity",
+        "enter_code": "Enter Identity Code",
+        "verify_button": "Verify Identity",
+        "enter_identity_code": "Please enter an identity code.",
+        "identity_found": "Identity found in the database.",
+        "identity_not_found": "Identity not found.",
+        "name": "Name",
+
+        "map_title": "🗺️ City Reports Map",
+        "report_locations": "Report Locations",
+        "no_locations": "No geographic locations available.",
+        "no_map_reports": "No reports available for the map.",
+
+        "ai_title": "🤖 Smart Report Intelligence",
+        "ai_notice": "This prototype uses keyword-based rules to classify reports and estimate their priority. It does not currently use a trained machine learning model.",
+        "analyze_description": "Enter a report description",
+        "analyze_button": "Analyze Report",
+        "detected_category": "Detected Category",
+        "analysis": "Reports Analysis",
+        "enter_description": "Please enter a description.",
+
+        "footer": "Integrated Digital Transformation Platform",
+        "prototype": "Project Prototype",
+
+        "Electricity": "Electricity",
+        "Water": "Water",
+        "Cleaning": "Cleaning",
+        "Roads": "Roads",
+        "General": "General",
+
+        "Pending": "Pending",
+        "In Progress": "In Progress",
+        "Resolved": "Resolved",
+
+        "High": "High",
+        "Normal": "Normal",
+
+        "email_column": "Email",
+        "created_at": "Created At",
+        "status": "Status",
+        "report_id": "Report ID",
+        "user_type_column": "User Type"
+    },
+
+    "العربية": {
+
+        "portal": "🌍 بوابة الأمة الذكية",
+        "language": "🌐 اللغة",
+        "dashboard": "لوحة التحكم والإحصائيات",
+        "submit": "تقديم بلاغ",
+        "manage": "إدارة البلاغات",
+        "identities": "الهويات الرقمية",
+        "verify": "التحقق من الهوية",
+        "map": "خريطة المدينة",
+        "ai": "الذكاء الاصطناعي",
+
+        "subtitle": "منصة التحول الرقمي المتكامل",
+        "dashboard_title": "📊 لوحة تحكم الأمة الذكية",
+        "dashboard_desc": "متابعة بلاغات المواطنين وحالة البنية التحتية وسجلات الهوية الرقمية.",
+
+        "total_reports": "إجمالي البلاغات",
+        "resolved": "البلاغات المحلولة",
+        "pending": "البلاغات النشطة",
+        "total_identities": "الهويات الرقمية",
+
+        "category_chart": "البلاغات حسب التصنيف",
+        "status_chart": "البلاغات حسب الحالة",
+        "no_reports": "لا توجد بلاغات حتى الآن.",
+
+        "submit_title": "📝 تقديم بلاغ مدني",
+        "submit_desc": "يمكنك الإبلاغ عن مشكلات البنية التحتية أو النظافة أو الخدمات العامة.",
+        "description": "وصف المشكلة",
+        "description_placeholder": "اكتب وصفاً تفصيلياً للمشكلة...",
+        "location": "اسم الموقع أو العنوان",
+        "location_placeholder": "أدخل موقع المشكلة...",
+        "latitude": "خط العرض",
+        "longitude": "خط الطول",
+        "submit_button": "إرسال البلاغ",
+        "fill_fields": "يرجى إدخال وصف المشكلة والموقع.",
+        "invalid_lat": "خط العرض غير صحيح.",
+        "invalid_lon": "خط الطول غير صحيح.",
+        "report_success": "تم إرسال البلاغ بنجاح!",
+        "category": "التصنيف",
+        "priority": "الأولوية",
+        "report_code": "رمز البلاغ",
+
+        "manage_title": "📋 إدارة البلاغات",
+        "admin_not_configured": "لم يتم إعداد كلمة مرور المسؤول.",
+        "admin_password": "كلمة مرور المسؤول",
+        "login": "تسجيل الدخول",
+        "incorrect_password": "كلمة المرور غير صحيحة.",
+        "admin_granted": "تم منح صلاحية المسؤول.",
+        "select_report": "اختر رقم البلاغ",
+        "update_status": "تحديث حالة البلاغ",
+        "save_update": "حفظ التحديث",
+        "report_updated": "تم تحديث البلاغ بنجاح.",
+        "download_csv": "تحميل البلاغات بصيغة CSV",
+        "no_reports_available": "لا توجد بلاغات متاحة.",
+        "logout": "تسجيل الخروج",
+
+        "identities_title": "🪪 الهوية الرقمية",
+        "identity_desc": "أنشئ هوية رقمية واحصل على رمز QR خاص بها.",
+        "full_name": "الاسم الكامل",
+        "email": "البريد الإلكتروني",
+        "user_type": "نوع المستخدم",
+        "citizen": "مواطن",
+        "student": "طالب",
+        "employee": "موظف",
+        "create_identity": "إنشاء الهوية",
+        "fill_identity": "يرجى ملء جميع الحقول.",
+        "invalid_email": "يرجى إدخال بريد إلكتروني صحيح.",
+        "duplicate_email": "هذا البريد الإلكتروني مسجل بالفعل.",
+        "identity_success": "تم إنشاء الهوية الرقمية بنجاح!",
+        "identity_code": "رمز الهوية",
+        "download_qr": "تحميل رمز QR",
+        "qr_caption": "رمز QR للهوية الرقمية",
+        "registered_identities": "اله        f"Category: {category} | Priority: {priority}"
                 )
 
                 st.write("Report Code:", report_code)
