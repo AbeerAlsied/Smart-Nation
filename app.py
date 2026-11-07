@@ -4,7 +4,7 @@ import sqlite3
 import pandas as pd
 import plotly.express as px
 import pydeck as pdk
-import QR code 
+import qrcode
 import io
 import uuid
 import hmac
