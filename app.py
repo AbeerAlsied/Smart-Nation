@@ -13,29 +13,74 @@ import hashlib
 import secrets
 import re
 import unicodedata
-import time
 from datetime import datetime
 
 # =====================================================
-# CONFIGURATION & THEME (Blue & Turquoise)
+# CONFIGURATION
 # =====================================================
 st.set_page_config(page_title="WNS", page_icon="🌍", layout="wide")
 DB_NAME = "smart_nation.db"
 
+# =====================================================
+# STYLE & THEME (Updated Identity)
+# =====================================================
 st.markdown("""
 <style>
-.main {background-color:#f4f8fb;}
-.block-container {padding-top:2rem;}
-h1,h2,h3 {color:#123b5d;}
-.stButton>button {
-    background-color:#087e8b; color:white; border-radius:8px;
-    border:none; padding:0.5rem 1rem; font-weight:bold;
+
+.stApp {
+    background-color: #f3f8fc;
 }
-.stButton>button:hover {background-color:#065a63; color:white;}
+
+section[data-testid="stSidebar"] {
+    background-color: #e7f2f8;
+}
+
+section[data-testid="stSidebar"] * {
+    color: #123b5d;
+}
+
+h1, h2, h3 {
+    color: #123b5d !important;
+}
+
+.stButton > button {
+    background: linear-gradient(90deg, #087e8b, #13a6a6);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 18px;
+    font-weight: bold;
+}
+
+.stButton > button:hover {
+    background: #075d68;
+    color: white;
+}
+
 div[data-testid="stMetric"] {
-    background-color:white; padding:18px; border-radius:12px;
-    box-shadow:0 2px 8px rgba(8,126,139,0.1); border-left: 5px solid #087e8b;
+    background-color: white;
+    padding: 20px;
+    border-radius: 14px;
+    border-left: 4px solid #13a6a6;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.06);
 }
+
+div[data-testid="stForm"] {
+    background-color: white;
+    padding: 20px;
+    border-radius: 14px;
+    border: 1px solid #dceaf2;
+}
+
+div[data-testid="stExpander"] {
+    background-color: white;
+    border-radius: 10px;
+}
+
+.stProgress > div > div {
+    background-color: #13a6a6;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,11 +130,11 @@ translations = {
         "password_mismatch":"Passwords do not match.","password_length":"Password must contain at least 8 characters.",
         "account_created":"Account created. You are now logged in.","my_reports":"My Reports",
         "login_required":"Please log in to view your services.","no_my_reports":"You have not submitted any reports yet.",
-        "welcome":"Welcome","login_to_account":"Log in with Identity or Email",
+        "welcome":"Welcome","login_to_account":"Log in with Email and Password",
         "report_owner_note":"Your report will be linked to your digital identity.",
         "report_saved":"Your report was saved and linked to your account.",
         "identity_created_at":"Identity Created","account":"Account",
-        "identity_registration_note":"Step 1: Create your account. Step 2: Verify your digital identity. Step 3: Submit reports.",
+        "identity_registration_note":"Step 1: Create your account & identity. Step 2: Log in securely. Step 3: Submit and track reports.",
         "verify_before_report":"Please verify your digital identity before submitting a report.",
         "verify_my_identity":"Verify my identity",
         "identity_verified":"Your digital identity has been verified. You can now submit reports.",
@@ -116,13 +161,13 @@ translations = {
         "submit":"إرسال البلاغ","report_success":"تم إرسال البلاغ بنجاح!",
         "report_error":"يرجى تعبئة جميع الحقول المطلوبة.","manage_title":"إدارة البلاغات ومتابعة الإشعارات",
         "admin_login":"دخول المسؤول","password":"كلمة المرور","login":"تسجيل الدخول",
-        "wrong_password":"البريد الإلكتروني أو رمز الهوية غير صحيح.",
+        "wrong_password":"البريد الإلكتروني أو كلمة المرور غير صحيحة.",
         "password_not_set":"لم يتم إعداد كلمة مرور المسؤول. أضف ADMIN_PASSWORD في إعدادات Secrets.",
         "admin_access":"تم السماح بدخول المسؤول.","report_code":"رمز البلاغ","status":"الحالة",
-        "Pending":"قيد الانتظار","In Progress":"جاري المعالجة","Resolved":"تمت المعالجة","update":"تحديث الحالة",
+        "Pending":"🟡 قيد الانتظار","In Progress":"🔵 جارٍ المعالجة","Resolved":"🟢 تمت المعالجة","update":"تحديث الحالة",
         "updated":"تم تحديث حالة البلاغ بنجاح.","logout":"تسجيل الخروج",
-        "download":"تحميل البلاغات CSV","identity_title":"إنشاء هوية رقمية وسريعة",
-        "create_identity":"إنشاء الهوية وتسجيل الدخول المباشر","identity_success":"تم إنشاء هويتك الرقمية بنجاح!",
+        "download":"تحميل البلاغات CSV","identity_title":"إنشاء هوية رقمية آمنة",
+        "create_identity":"إنشاء الحساب والهوية الرقمية","identity_success":"تم إنشاء حسابك وهويتك الرقمية بنجاح!",
         "identity_code":"رمز الهوية الرقمية","created_at":"تاريخ الإنشاء","identity_list":"الهويات المسجلة",
         "no_identities":"لا توجد هويات رقمية مسجلة حتى الآن.","verify_title":"التحقق من الهوية الرقمية",
         "enter_code":"أدخل رمز الهوية أو البريد","verify":"تحقق من الهوية",
@@ -139,20 +184,20 @@ translations = {
         "enter_description":"يرجى إدخال وصف البلاغ.","category_result":"التصنيف المتوقع",
         "priority_result":"الأولوية المتوقعة","identity_details":"تفاصيل الهوية",
         "identity_exists":"توجد هوية مسجلة بهذا البريد الإلكتروني بالفعل.","select_status":"اختر الحالة الجديدة",
-        "create_password":"إنشاء كلمة مرور للحساب","confirm_password":"تأكيد كلمة المرور",
+        "create_password":"إنشاء كلمة مرور قوية","confirm_password":"تأكيد كلمة المرور",
         "password_mismatch":"كلمتا المرور غير متطابقتين.",
         "password_length":"يجب أن تتكون كلمة المرور من 8 أحرف على الأقل.",
-        "account_created":"تم تسجيل دخولك بنجاح.","my_reports":"بلاغاتي الشخصية",
-        "login_required":"يرجى تسجيل الدخول أو إدخال هويتك الرقمية لمتابعة خدماتك.","no_my_reports":"لم تقم بإرسال أي بلاغ حتى الآن.",
-        "welcome":"مرحباً بك","login_to_account":"تسجيل الدخول السريع باستخدام الهوية أو البريد",
-        "report_owner_note":"سيتم ربط البلاغ بهويتك الرقمية مباشرة لتسهيل متابعته.",
+        "account_created":"تم تسجيل دخولك بنجاح وتم تفعيل هويتك التلقائية.","my_reports":"بلاغاتي الشخصية",
+        "login_required":"يرجى تسجيل الدخول بالبريد الإلكتروني وكلمة المرور لمتابعة خدماتك.","no_my_reports":"لم تقم بإرسال أي بلاغ حتى الآن.",
+        "welcome":"مرحباً بك","login_to_account":"تسجيل الدخول بالبريد وكلمة المرور",
+        "report_owner_note":"سيتم ربط البلاغ بهويتك الرقمية المسجلة لمتابعة حالته بكل سهولة.",
         "report_saved":"تم حفظ البلاغ وربطه بحسابك وإرسال إشعار فوري للمسؤول.",
         "identity_created_at":"تاريخ الإنشاء","account":"الحساب الشخصي",
-        "identity_registration_note":"أنشئ هويتك الرقمية مرة واحدة واستخدمها للدخول السريع وإرسال ومتابعة البلاغات بكل سهولة.",
+        "identity_registration_note":"الخطوة 1: أنشئ حسابك وهويتك. الخطوة 2: سجّل دخولك بأمان. الخطوة 3: أرسل وتتبع بلاغاتك.",
         "verify_before_report":"يرجى التحقق من هويتك الرقمية أولاً قبل إرسال البلاغ.",
-        "verify_my_identity":"تفعيل هويتي الآن",
-        "identity_verified":"تم التحقق من هويتك الرقمية بنجاح. يمكنك الآن إرسال البلاغات.",
-        "identity_not_logged":"سجّل الدخول بهويتك الرقمية أولاً.",
+        "verify_my_identity":"التحقق من هويتي",
+        "identity_verified":"تم التحقق من هويتك الرقمية. يمكنك الآن إرسال البلاغات.",
+        "identity_not_logged":"سجّل الدخول بحسابك أولاً.",
         "dialect_note":"النظام يتعرّف على تعبيرات عربية دارجة وبعض الكلمات باللهجة السودانية (مثل: كوشة، ماسورة، نور قاطع، إلخ).",
         "logout_account":"تسجيل الخروج من الحساب","status_tracking":"حالة البلاغ",
         "risk_score":"نسبة الخطورة المتوقعة","department":"الجهة التنفيذية المقترحة","est_time":"الوقت المتوقع للاستجابة",
@@ -347,7 +392,6 @@ def translate_category(category):
     return t(mapping.get(category, "other_category"))
 
 def translate_status(status):
-    # إرجاع الحالة المترجمة الصحيحة (قيد الانتظار، جاري المعالجة، تمت المعالجة)
     return t(status)
 
 def translate_priority(priority):
@@ -416,7 +460,7 @@ if selected_page == "dashboard":
             chart = reports["status"].value_counts().reset_index()
             chart.columns = ["Status","Count"]
             chart["Status"] = chart["Status"].apply(translate_status)
-            st.plotly_chart(px.bar(chart, x="Status", y="Count", color="Status", color_discrete_sequence=['#087e8b', '#123b5d', '#20a4f3']), use_container_width=True)
+            st.plotly_chart(px.bar(chart, x="Status", y="Count", color="Status", color_discrete_sequence=['#f1c40f', '#3498db', '#2ecc71']), use_container_width=True)
         st.subheader(t("recent_reports"))
         recent = reports.head(5).copy()
         for col, func in [("category", translate_category), ("status", translate_status), ("priority", translate_priority)]:
@@ -426,13 +470,13 @@ if selected_page == "dashboard":
         st.info(t("no_reports"))
 
 # =====================================================
-# DIGITAL IDENTITY PAGE (Simplified Login & Creation)
+# DIGITAL IDENTITY PAGE (Simplified Flow & Secure Login)
 # =====================================================
 elif selected_page == "digital_identities":
     st.header("🪪 " + t("identity_title"))
     st.info(t("identity_registration_note"))
     
-    tab1, tab2 = st.tabs(["إنشاء هوية سريعة / Create ID", "تسجيل الدخول السريع / Quick Login"])
+    tab1, tab2 = st.tabs(["إنشاء حساب وهوية / Create Account", "تسجيل الدخول / Login"])
     
     with tab1:
         with st.form("identity_form"):
@@ -474,13 +518,13 @@ elif selected_page == "digital_identities":
 
     with tab2:
         with st.form("quick_login_form"):
-            login_id = st.text_input("أدخل البريد أو رمز الهوية (مثل WNS-XXXXX)").strip()
+            login_email = st.text_input(t("email")).strip().lower()
             login_pass = st.text_input(t("password"), type="password")
             login_btn = st.form_submit_button(t("login"))
         if login_btn:
             conn = get_connection()
             cur = conn.cursor()
-            cur.execute("SELECT identity_code, password_hash FROM identities WHERE email = ? OR identity_code = ?", (login_id.lower(), login_id))
+            cur.execute("SELECT identity_code, password_hash FROM identities WHERE email = ?", (login_email,))
             acc = cur.fetchone()
             conn.close()
             if acc and verify_password(login_pass, acc[1]):
@@ -594,7 +638,7 @@ elif selected_page == "submit_report":
                 st.error(t("report_error"))
 
 # =====================================================
-# ADMIN REPORT MANAGEMENT & NOTIFICATIONS (Merged View)
+# ADMIN REPORT MANAGEMENT & NOTIFICATIONS (Integrated)
 # =====================================================
 elif selected_page == "manage_reports":
     st.header("⚙️ " + t("manage_title"))
@@ -620,33 +664,45 @@ elif selected_page == "manage_reports":
             st.session_state.admin_logged_in = False
             st.rerun()
 
-        # Integrated Notifications & Reports Section
-        unread_notifications = load_admin_notifications(unread_only=True)
-        all_notifications = load_admin_notifications()
-        unread_count = len(unread_notifications)
+        @st.fragment(run_every="10s")
+        def render_admin_notifications_section():
+            unread_notifications = load_admin_notifications(unread_only=True)
+            all_notifications = load_admin_notifications()
+            unread_count = len(unread_notifications)
 
-        st.subheader(f"🔔 إشعارات المسؤول والطلبات ({unread_count} جديدة)")
-        if unread_count > 0:
-            for _, notif in unread_notifications.iterrows():
-                with st.container(border=True):
-                    st.markdown(f"**{notif['title']}** — 🕒 {notif['created_at']}")
-                    st.write(notif["message"])
-                    if pd.notna(notif.get("report_desc")):
-                        st.info(f"**التفاصيل:** {notif['report_desc']} | **الموقع:** {notif['report_loc']}")
-            if st.button("تحديد كل الإشعارات كمقروءة"):
-                mark_notifications_read()
-                st.rerun()
-        else:
-            st.success("لا توجد إشعارات جديدة بانتظار المراجعة.")
+            st.subheader(f"🔔 إشعارات المسؤول والطلبات ({unread_count} جديدة)")
+            if unread_count > 0:
+                for _, notif in unread_notifications.iterrows():
+                    with st.container(border=True):
+                        st.markdown(f"**{notif['title']}** — 🕒 {notif['created_at']}")
+                        st.write(notif["message"])
+                        if pd.notna(notif.get("report_desc")):
+                            st.info(f"**التفاصيل:** {notif['report_desc']} | **الموقع:** {notif['report_loc']}")
+                if st.button("تحديد كل الإشعارات كمقروءة", key="mark_read_btn"):
+                    mark_notifications_read()
+                    st.rerun()
+            else:
+                st.success("لا توجد إشعارات جديدة بانتظار المراجعة.")
 
+            with st.expander("سجل الإشعارات السابقة / Notification History"):
+                if all_notifications.empty:
+                    st.info("لا توجد إشعارات مسجلة بعد.")
+                else:
+                    for _, notif in all_notifications.iterrows():
+                        status_lbl = "مقروء" if notif["is_read"] else "جديد"
+                        st.write(f"🔔 **{notif['title']}** — {notif['message']}")
+                        st.caption(f"{notif['created_at']} · {status_lbl}")
+
+        render_admin_notifications_section()
         st.divider()
+
         st.subheader("📋 " + t("report_details"))
         reports = load_reports()
         if reports.empty:
             st.info(t("no_reports"))
         else:
             statuses = ["Pending", "In Progress", "Resolved"]
-            status_labels = {"Pending": "قيد الانتظار", "In Progress": "جاري المعالجة", "Resolved": "تمت المعالجة"}
+            status_labels = {"Pending": "🟡 قيد الانتظار", "In Progress": "🔵 جارٍ المعالجة", "Resolved": "🟢 تمت المعالجة"}
             
             for _, row in reports.iterrows():
                 current_stat = row["status"] if row["status"] in statuses else "Pending"
@@ -731,3 +787,4 @@ elif selected_page == "ai_intelligence":
 # =====================================================
 st.divider()
 st.markdown(f'<div style="text-align:center;color:#087e8b;padding:15px;">🌍 {t("footer")}</div>', unsafe_allow_html=True)
+ 
