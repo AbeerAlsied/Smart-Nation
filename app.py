@@ -18,7 +18,7 @@ from datetime import datetime
 # =====================================================
 # CONFIGURATION
 # =====================================================
-st.set_page_config(page_title="Smart Nation", page_icon="🌍", layout="wide")
+st.set_page_config(page_title="NWS", page_icon="🌍", layout="wide")
 DB_NAME = "smart_nation.db"
 
 # =====================================================
@@ -26,7 +26,7 @@ DB_NAME = "smart_nation.db"
 # =====================================================
 translations = {
     "English": {
-        "app_title":"Smart Nation","subtitle":"Integrated Digital Transformation Platform",
+        "app_title":"NWS","subtitle":"Integrated Digital Transformation Platform",
         "navigation":"Navigation","dashboard":"Dashboard & Analytics","submit_report":"Submit Report",
         "manage_reports":"Manage Reports","digital_identities":"Digital Identities",
         "verify_identity":"Verify Identity","my_services":"My Services","city_map":"City Map",
@@ -59,7 +59,7 @@ translations = {
         "analyze":"Analyze Report","analysis_result":"Analysis Result","electricity":"Electricity",
         "water":"Water","cleaning":"Cleaning","roads":"Roads","other_category":"Other",
         "classification_note":"This prototype uses keyword-based rules. It is not a trained machine-learning model.",
-        "footer":"Smart Nation | Integrated Digital Transformation Platform",
+        "footer":"NWS | النيل الأبيض الذكية | Integrated Digital Transformation Platform",
         "report_details":"Report Details","enter_description":"Please enter a description.",
         "category_result":"Predicted Category","priority_result":"Predicted Priority",
         "identity_details":"Identity Details","identity_exists":"An identity with this email already exists.",
@@ -81,7 +81,7 @@ translations = {
         "logout_account":"Log out of account","status_tracking":"Report Status Tracking"
     },
     "العربية": {
-        "app_title":"الأمة الذكية","subtitle":"منصة التحول الرقمي المتكاملة",
+        "app_title":"النيل الأبيض الذكية","subtitle":"منصة التحول الرقمي المتكاملة",
         "navigation":"القائمة الرئيسية","dashboard":"لوحة التحكم والتحليلات","submit_report":"إرسال بلاغ",
         "manage_reports":"إدارة البلاغات","digital_identities":"الهويات الرقمية",
         "verify_identity":"التحقق من الهوية","my_services":"خدماتي وبلاغاتي","city_map":"خريطة المدينة",
@@ -116,7 +116,7 @@ translations = {
         "analysis_result":"نتيجة التحليل","electricity":"الكهرباء","water":"المياه",
         "cleaning":"النظافة","roads":"الطرق","other_category":"أخرى",
         "classification_note":"هذا النموذج الأولي يعتمد على الكلمات المفتاحية والقواعد، وليس نموذج تعلم آلي مدرباً.",
-        "footer":"الأمة الذكية | منصة التحول الرقمي المتكاملة","report_details":"تفاصيل البلاغ",
+        "footer":"النيل الأبيض الذكية | منصة التحول الرقمي المتكاملة","report_details":"تفاصيل البلاغ",
         "enter_description":"يرجى إدخال وصف البلاغ.","category_result":"التصنيف المتوقع",
         "priority_result":"الأولوية المتوقعة","identity_details":"تفاصيل الهوية",
         "identity_exists":"توجد هوية مسجلة بهذا البريد الإلكتروني بالفعل.","select_status":"اختر الحالة",
@@ -1028,6 +1028,6 @@ if selected_page in citizen_steps:
 st.divider()
 st.markdown(
     f"""<div style="text-align:center;color:gray;padding:15px;">
-    🌍 {t("footer")}<br><small>Smart Nation Prototype</small></div>""",
+    🌍 {t("footer")}<br><small>NWS Prototype</small></div>""",
     unsafe_allow_html=True
 )
