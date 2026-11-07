@@ -758,15 +758,10 @@ elif selected_page == "manage_reports":
 
         @st.fragment
         def render_admin_notifications_section():
-            # Auto-refresh fragment every 10 seconds
-            time.sleep(10)
-            st.rerun()
-
             unread_notifications = load_admin_notifications(unread_only=True)
             all_notifications = load_admin_notifications()
             unread_count = len(unread_notifications)
 
-            # Notification Header with Counter Badge
             header_text = (
                 f"🔔 إشعارات المسؤول ({unread_count} جديدة)" if st.session_state.language == "العربية"
                 else f"🔔 Admin Notifications ({unread_count} new)"
@@ -820,6 +815,9 @@ elif selected_page == "manage_reports":
                         if pd.notna(notification.get("report_desc")):
                             st.caption(f"التفاصيل: {notification['report_desc']} | الموقع: {notification['report_loc']}")
                         st.caption(f"{notification['created_at']} · {status_label}")
+            
+            time.sleep(10)
+            st.rerun()
 
         render_admin_notifications_section()
         st.divider()
