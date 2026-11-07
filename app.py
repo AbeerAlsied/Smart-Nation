@@ -207,6 +207,17 @@ def initialize_database():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS admin_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER,
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            is_read INTEGER DEFAULT 0
+        )
+    """)
+
     # Add new columns to databases created by earlier versions.
     identity_columns = [row[1] for row in cur.execute("PRAGMA table_info(identities)").fetchall()]
     if "password_hash" not in identity_columns:
@@ -232,6 +243,23 @@ def load_identities():
     df = pd.read_sql_query("SELECT * FROM identities ORDER BY id DESC", conn)
     conn.close()
     return df
+
+
+def load_admin_notifications(unread_only=False):
+    conn = get_connection()
+    query = "SELECT * FROM admin_notifications"
+    if unread_only:
+        query += " WHERE is_read = 0"
+    query += " ORDER BY id DESC"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+def mark_notifications_read():
+    conn = get_connection()
+    conn.execute("UPDATE admin_notifications SET is_read = 1 WHERE is_read = 0")
+    conn.commit()
+    conn.close()
 
 # =====================================================
 # PASSWORD HELPERS
@@ -399,18 +427,14 @@ pages = ["digital_identities", "verify_identity", "submit_report", "my_services"
          "dashboard", "city_map", "ai_intelligence", "manage_reports"]
 page_labels = [t(page) for page in pages]
 
-# Top horizontal navigation: switch pages directly without opening the sidebar.
-if "selected_page" not in st.session_state:
-    st.session_state.selected_page = "digital_identities"
+if "main_navigation" not in st.session_state or st.session_state.main_navigation not in page_labels:
+    st.session_state.main_navigation = page_labels[0]
 
-nav_columns = st.columns(len(pages))
-for index, (page_key, label) in enumerate(zip(pages, page_labels)):
-    with nav_columns[index]:
-        if st.button(label, key=f"top_nav_{page_key}", use_container_width=True):
-            st.session_state.selected_page = page_key
-
-selected_page = st.session_state.selected_page
-st.divider()
+selected_label = st.sidebar.radio(
+    t("navigation"), page_labels,
+    key="main_navigation"
+)
+selected_page = pages[page_labels.index(selected_label)]
 
 # =====================================================
 # SESSION ACCOUNT HELPERS
@@ -678,13 +702,28 @@ elif selected_page == "submit_report":
                 report_code = str(uuid.uuid4())
                 conn = get_connection()
                 cur = conn.cursor()
+                created_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 cur.execute("""
                     INSERT INTO reports (report_code, identity_code, category, description, location,
                                          latitude, longitude, priority, status, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (report_code, identity[0], final_category, description, location,
-                      latitude, longitude, priority, "Pending",
-                      datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                      latitude, longitude, priority, "Pending", created_time))
+                new_report_id = cur.lastrowid
+
+                # Save an admin notification whenever a citizen submits a report.
+                notification_title = "بلاغ جديد" if st.session_state.language == "العربية" else "New report"
+                notification_message = (
+                    f"بلاغ جديد من {identity[1]} في {location}"
+                    if st.session_state.language == "العربية"
+                    else f"New report submitted by {identity[1]} at {location}"
+                )
+                cur.execute("""
+                    INSERT INTO admin_notifications
+                    (report_id, title, message, created_at, is_read)
+                    VALUES (?, ?, ?, ?, 0)
+                """, (new_report_id, notification_title, notification_message, created_time))
+
                 conn.commit()
                 conn.close()
                 st.success(t("report_saved"))
@@ -720,6 +759,42 @@ elif selected_page == "manage_reports":
             else:
                 st.error(t("wrong_password"))
     else:
+        unread_notifications = load_admin_notifications(unread_only=True)
+        all_notifications = load_admin_notifications()
+
+        st.subheader("🔔 إشعارات المسؤول" if st.session_state.language == "العربية" else "🔔 Admin Notifications")
+        if not unread_notifications.empty:
+            st.error(
+                f"لديك {len(unread_notifications)} إشعار جديد ببلاغات مقدمة."
+                if st.session_state.language == "العربية"
+                else f"You have {len(unread_notifications)} new report notification(s)."
+            )
+            for _, notification in unread_notifications.iterrows():
+                with st.container(border=True):
+                    st.markdown(f"**{notification['title']}**")
+                    st.write(notification["message"])
+                    st.caption(notification["created_at"])
+            if st.button(
+                "تحديد كل الإشعارات كمقروءة" if st.session_state.language == "العربية" else "Mark all as read",
+                key="mark_notifications_read"
+            ):
+                mark_notifications_read()
+                st.rerun()
+        else:
+            st.success(
+                "لا توجد إشعارات جديدة." if st.session_state.language == "العربية"
+                else "There are no new notifications."
+            )
+
+        with st.expander("سجل الإشعارات" if st.session_state.language == "العربية" else "Notification history"):
+            if all_notifications.empty:
+                st.info("لا توجد إشعارات بعد." if st.session_state.language == "العربية" else "No notifications yet.")
+            else:
+                for _, notification in all_notifications.iterrows():
+                    status_label = "مقروء" if notification["is_read"] else "جديد"
+                    st.write(f"🔔 **{notification['title']}** — {notification['message']}")
+                    st.caption(f"{notification['created_at']} · {status_label}")
+
         if st.button(t("logout"), key="admin_logout_button"):
             st.session_state.admin_logged_in = False
             st.rerun()
@@ -891,6 +966,50 @@ elif selected_page == "ai_intelligence":
             st.warning(t("enter_description"))
     st.divider()
     st.caption("ℹ️ " + t("classification_note"))
+
+# =====================================================
+# CITIZEN JOURNEY NAVIGATION BUTTONS
+# =====================================================
+
+# The sidebar remains available on every page. These buttons are optional
+# shortcuts through the citizen journey; users can still choose any page.
+citizen_steps = ["digital_identities", "verify_identity", "submit_report", "my_services"]
+if selected_page in citizen_steps:
+    current_step_index = citizen_steps.index(selected_page)
+    st.divider()
+    previous_col, progress_col, next_col = st.columns([1, 2, 1])
+
+    with previous_col:
+        if current_step_index > 0:
+            previous_page = citizen_steps[current_step_index - 1]
+            if st.button(
+                "← " + t(previous_page),
+                key=f"step_previous_{selected_page}",
+                use_container_width=True
+            ):
+                st.session_state.main_navigation = t(previous_page)
+                st.rerun()
+
+    with progress_col:
+        step_text = (
+            f"الخطوة {current_step_index + 1} من {len(citizen_steps)}"
+            if st.session_state.language == "العربية"
+            else f"Step {current_step_index + 1} of {len(citizen_steps)}"
+        )
+        st.markdown(f"<div style='text-align:center;padding-top:8px;color:#64748b'>{step_text}</div>",
+                    unsafe_allow_html=True)
+
+    with next_col:
+        if current_step_index < len(citizen_steps) - 1:
+            next_page = citizen_steps[current_step_index + 1]
+            if st.button(
+                t(next_page) + " →",
+                key=f"step_next_{selected_page}",
+                type="primary",
+                use_container_width=True
+            ):
+                st.session_state.main_navigation = t(next_page)
+                st.rerun()
 
 # =====================================================
 # FOOTER
