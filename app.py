@@ -3,6 +3,7 @@ from streamlit_geolocation import streamlit_geolocation
 import sqlite3
 import pandas as pd
 import plotly.express as px
+import pydeck as pdk
 import qrcode
 import io
 import uuid
@@ -250,6 +251,22 @@ def verify_password(password, stored_hash):
         return False
 
 # =====================================================
+# WHITE NILE STATE LOCATIONS
+# =====================================================
+
+WHITE_NILE_CITIES = {
+    "كوستي": (13.16290, 32.66347),
+    "ربك": (13.18087, 32.73999),
+    "الدويم": (14.00120, 32.31160),
+    "القطينة": (14.86480, 32.36680),
+    "تندلتي": (13.01667, 31.86667),
+    "مرابة": (12.35000, 32.18333),
+    "الجزيرة أبا": (13.31930, 32.61320),
+    "الكوة": (13.74630, 32.49960),
+    "ود الزاكي": (14.46190, 32.20650),
+}
+
+# =====================================================
 # CLASSIFICATION AND QR
 # =====================================================
 
@@ -264,75 +281,68 @@ def normalize_text(value):
 
 
 def analyze_report(description):
-    """Dialect-aware rule classifier. It supports common Arabic and Sudanese terms,
-    but remains a rules-based prototype rather than a trained ML model.
-    """
+    """Rule-based Arabic/Sudanese dialect classifier and priority estimator."""
     text = normalize_text(description)
-    categories = {
-        "Electricity": [
-            "electricity", "power outage", "power", "light", "electric", "كهرباء", "كهربا",
-            "النور قاطع", "الكهربا قاطعه", "الكهرباء قاطعه", "اناره", "انقطاع التيار",
-            "تيار", "عمود كهرباء", "عمود كهربا", "اسلاك", "سلك عريان", "سلك مكشوف",
-            "اللمبات طافيه", "الشارع ضلمه", "الشارع مظلم"
-        ],
-        "Water": [
-            "water", "leak", "pipe", "drinking water", "مياه", "موية", "مويا", "مويه",
-            "موية قاطعه", "الموية قاطعه", "المويه قاطعه", "الموية ضعيفه", "حنفيه",
-            "حنفية", "تسريب", "ماسوره", "ماسورة", "انبوب", "انقطاع المياه", "صرف صحي",
-            "المجاري", "طفح المجاري", "موية متسربه"
-        ],
-        "Cleaning": [
-            "garbage", "waste", "trash", "cleaning", "نفايات", "قمامه", "زباله", "زبل",
-            "وسخ", "اوساخ", "كوشه", "نظافه", "مخلفات", "تراكم القمامه", "الشارع مليان زباله",
-            "الزباله متراكمه", "ريحة كريهه", "روائح كريهه"
-        ],
-        "Roads": [
-            "road", "pothole", "street", "asphalt", "شارع", "شوارع", "حفره", "حفرة",
-            "طريق", "اسفلت", "اسفلت مكسر", "الشارع مكسر", "الشارع محفّر", "شارع محفّر",
-            "مطب", "مطبات", "رصيف", "اشاره مرور", "اشارة مرور", "الشارع متكسر"
-        ]
+
+    category_terms = {
+        "Electricity": ["كهرباء", "كهربا", "النور", "تيار", "اناره", "عمود كهرباء",
+                        "سلك", "اسلاك", "لمبات", "ضلمه", "power", "electric", "light",
+                        "electricity", "outage"],
+        "Water": ["مياه", "موية", "مويا", "مويه", "حنفيه", "حنفية", "ماسوره",
+                  "انبوب", "تسريب", "المجاري", "صرف صحي", "water", "leak",
+                  "pipe", "drinking water", "sewage"],
+        "Cleaning": ["نفايات", "قمامه", "زباله", "زبل", "وسخ", "اوساخ", "كوشه",
+                     "نظافه", "مخلفات", "ريحة", "روائح", "garbage", "waste",
+                     "trash", "cleaning", "rubbish"],
+        "Roads": ["شارع", "شوارع", "حفره", "طريق", "اسفلت", "مكسر", "محفر",
+                  "مطب", "مطبات", "رصيف", "اشاره مرور", "road", "pothole",
+                  "street", "asphalt", "traffic light"]
     }
-    scores = {name: sum(2 if len(word) > 4 else 1 for word in words if word in text)
-              for name, words in categories.items()}
+
+    scores = {
+        category: sum(1 for term in terms if normalize_text(term) in text)
+        for category, terms in category_terms.items()
+    }
     best_category = max(scores, key=scores.get)
-    category = best_category if scores[best_category] > 0 else "Other"
+    category = best_category if scores[best_category] else "Other"
 
-    urgent_phrases = [
-        "urgent", "emergency", "life threatening", "dangerous", "major accident",
-        "fire", "smoke", "explosion", "fallen power line", "live wire",
-        "عاجل", "طوارئ", "خطر", "خطير", "حريق", "دخان", "انفجار", "حادث",
-        "اسلاك كهرباء ساقطه", "سلك كهرباء ساقط", "عمود كهرباء ساقط", "عمود واقع",
-        "سلك عريان", "سلك مكشوف", "صعق كهربائي", "موية ملوثه", "مياه ملوثه",
-        "تلوث مياه", "انهيار", "اغلاق الطريق بالكامل", "ماسوره انفجرت",
-        "ماسورة انفجرت", "الموية داخله البيوت", "المياه داخله البيوت"
+    critical_terms = [
+        "حريق", "نار", "دخان", "انفجار", "صعق", "سلك عريان", "سلك مكشوف", "سلك كهرباء عريان", "سلك كهربا عريان", "سلك كهرباء مكشوف", "سلك كهربا مكشوف",
+        "سلك واقع", "عمود واقع", "عمود ساقط", "اسلاك ساقطه", "خطر شديد",
+        "خطر على الناس", "حادث خطير", "انهيار", "غرق", "فيضان",
+        "مياه ملوثه", "موية ملوثه", "تسمم", "urgent", "emergency", "fire",
+        "smoke", "explosion", "electrocution", "live wire", "fallen pole",
+        "collapse", "flood", "contaminated water", "life threatening"
     ]
-    impact_phrases = [
-        "entire area", "whole neighborhood", "many houses", "large area",
-        "blocked completely", "causing accidents", "people injured",
-        "الحي بالكامل", "المنطقه بالكامل", "كل المنطقه", "كل الحي", "منازل كثيره",
-        "عدد كبير", "بيوت كتيره", "الناس كلها", "يسبب حوادث", "يعرض الناس للخطر",
-        "يهدد السلامه", "اغلاق كامل", "انقطاع كامل", "قاطع من الصباح", "من امبارح"
+    service_failure_terms = [
+        "الموية قاطعه", "المويه قاطعه", "موية قاطعه", "مافي موية",
+        "مافي مياه", "انقطاع المياه", "انقطاع المويه", "انقطاع الموية",
+        "الكهربا قاطعه", "الكهرباء قاطعه", "النور قاطع", "مافي كهربا",
+        "مافي كهرباء", "انقطاع الكهرباء", "انقطاع التيار",
+        "ماسوره مكسوره", "ماسورة مكسورة", "تسريب كبير", "طفح المجاري",
+        "المجاري طافحه", "الشارع غرقان", "حفره كبيره", "الشارع مكسر",
+        "طريق مقفول", "garbage not collected", "no water", "no electricity",
+        "power outage", "water outage", "sewage overflow", "broken pipe",
+        "large pothole", "road blocked"
     ]
-    moderate_phrases = [
-        "outage", "no water", "no electricity", "overflow", "flooding",
-        "broken pipe", "large hole", "انقطاع", "الموية قاطعه", "المويه قاطعه",
-        "مافي موية", "مافي مياه", "مافي كهرباء", "مافي كهربا", "الكهربا قاطعه",
-        "بدون مياه", "بدون كهرباء", "طفح", "غرق", "ماسوره مكسوره", "ماسورة مكسورة",
-        "حفره كبيره", "تسرب كبير", "تراكم كبير", "الشارع مكسر"
+    impact_terms = [
+        "الحي بالكامل", "كل الحي", "المنطقه بالكامل", "كل المنطقة",
+        "كل المنطقه", "بيوت كتيره", "منازل كثيره", "عدد كبير",
+        "الناس كلها", "مدرسه", "مستشفى", "مركز صحي", "شارع رئيسي",
+        "يعطل حركة المرور", "يسبب حوادث", "يعرض الناس للخطر",
+        "من امبارح", "من يومين", "من اسبوع", "لفتره طويله",
+        "whole neighborhood", "entire area", "many houses", "hospital",
+        "school", "main road", "causing accidents", "long time", "several days"
     ]
 
-    urgency_score = 0
-    for phrase in urgent_phrases:
-        if phrase in text:
-            urgency_score += 3
-    for phrase in impact_phrases:
-        if phrase in text:
-            urgency_score += 2
-    for phrase in moderate_phrases:
-        if phrase in text:
-            urgency_score += 1
+    critical = any(normalize_text(term) in text for term in critical_terms)
+    service_score = sum(1 for term in service_failure_terms if normalize_text(term) in text)
+    impact_score = sum(1 for term in impact_terms if normalize_text(term) in text)
 
-    priority = "Urgent" if urgency_score >= 3 else "Normal"
+    # Critical hazards are urgent immediately. Wider outages or a service failure
+    # affecting people/important facilities are also urgent.
+    priority = "Urgent" if (critical or service_score >= 1 or impact_score >= 2) else "Normal"
+
     return category, priority
 
 def generate_qr(data):
@@ -388,8 +398,19 @@ st.divider()
 pages = ["digital_identities", "verify_identity", "submit_report", "my_services",
          "dashboard", "city_map", "ai_intelligence", "manage_reports"]
 page_labels = [t(page) for page in pages]
-selected_label = st.sidebar.radio(t("navigation"), page_labels)
-selected_page = pages[page_labels.index(selected_label)]
+
+# Top horizontal navigation: switch pages directly without opening the sidebar.
+if "selected_page" not in st.session_state:
+    st.session_state.selected_page = "digital_identities"
+
+nav_columns = st.columns(len(pages))
+for index, (page_key, label) in enumerate(zip(pages, page_labels)):
+    with nav_columns[index]:
+        if st.button(label, key=f"top_nav_{page_key}", use_container_width=True):
+            st.session_state.selected_page = page_key
+
+selected_page = st.session_state.selected_page
+st.divider()
 
 # =====================================================
 # SESSION ACCOUNT HELPERS
@@ -622,10 +643,19 @@ elif selected_page == "submit_report":
             if accuracy is not None:
                 st.caption(("دقة الموقع التقريبية: " if st.session_state.language == "العربية" else "Approximate location accuracy: ") + f"{accuracy:.0f} m")
 
-        default_lat = float(st.session_state.get("report_latitude", 15.5000))
-        default_lon = float(st.session_state.get("report_longitude", 32.5000))
+        default_city = "كوستي"
+        default_lat, default_lon = WHITE_NILE_CITIES[default_city]
+        default_lat = float(st.session_state.get("report_latitude", default_lat))
+        default_lon = float(st.session_state.get("report_longitude", default_lon))
         with st.form("report_form"):
-            location = st.text_input(t("location"))
+            city_options = list(WHITE_NILE_CITIES.keys())
+            selected_city = st.selectbox(
+                "المدينة / المحلية داخل ولاية النيل الأبيض",
+                city_options,
+                index=city_options.index(default_city)
+            )
+            neighborhood = st.text_input("الحي أو الشارع / Neighborhood")
+            location = f"{selected_city} - {neighborhood}".strip(" -")
             category_options = ["Auto", "Electricity", "Water", "Cleaning", "Roads", "Other"]
             category = st.selectbox(
                 t("category"), category_options,
@@ -633,10 +663,13 @@ elif selected_page == "submit_report":
             )
             description = st.text_area(t("description"))
             c1, c2 = st.columns(2)
+            city_lat, city_lon = WHITE_NILE_CITIES[selected_city]
+            fallback_lat = default_lat if st.session_state.get("report_location_detected") else city_lat
+            fallback_lon = default_lon if st.session_state.get("report_location_detected") else city_lon
             with c1:
-                latitude = st.number_input(t("latitude"), value=default_lat, format="%.6f")
+                latitude = st.number_input(t("latitude"), value=float(fallback_lat), format="%.6f")
             with c2:
-                longitude = st.number_input(t("longitude"), value=default_lon, format="%.6f")
+                longitude = st.number_input(t("longitude"), value=float(fallback_lon), format="%.6f")
             submitted = st.form_submit_button(t("submit"))
         if submitted:
             if location.strip() and description.strip():
@@ -774,17 +807,70 @@ elif selected_page == "verify_identity":
 
 elif selected_page == "city_map":
     st.header("🗺️ " + t("map_title"))
+    st.caption("الخريطة مخصصة لولاية النيل الأبيض – السودان | White Nile State, Sudan")
+
+    city_df = pd.DataFrame([
+        {"name": city, "latitude": coords[0], "longitude": coords[1], "kind": "مدينة"}
+        for city, coords in WHITE_NILE_CITIES.items()
+    ])
+
     reports = load_reports()
     if not reports.empty:
-        map_data = reports.dropna(subset=["latitude", "longitude"])
-        if not map_data.empty:
-            st.map(map_data.rename(columns={"latitude": "lat", "longitude": "lon"})[["lat", "lon"]])
-            for _, row in map_data.iterrows():
-                st.write(f"📍 **{row['location']}** — {translate_category(row['category'])} — {translate_status(row['status'])}")
-        else:
-            st.info(t("map_empty"))
+        report_points = reports.dropna(subset=["latitude", "longitude"]).copy()
+        report_points["latitude"] = pd.to_numeric(report_points["latitude"], errors="coerce")
+        report_points["longitude"] = pd.to_numeric(report_points["longitude"], errors="coerce")
+        report_points = report_points.dropna(subset=["latitude", "longitude"])
+        if not report_points.empty:
+            report_points["name"] = report_points["location"].fillna("بلاغ")
+            report_points["kind"] = "بلاغ"
     else:
-        st.info(t("map_empty"))
+        report_points = pd.DataFrame()
+
+    st.subheader("مدن ومحليات ولاية النيل الأبيض")
+    st.dataframe(
+        city_df[["name", "latitude", "longitude"]].rename(
+            columns={"name": "المدينة / المحلية", "latitude": "خط العرض", "longitude": "خط الطول"}
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    layers = [
+        pdk.Layer(
+            "ScatterplotLayer", data=city_df,
+            get_position="[longitude, latitude]", get_radius=1800,
+            get_fill_color=[20, 120, 180, 180], pickable=True
+        )
+    ]
+    if not report_points.empty:
+        layers.append(
+            pdk.Layer(
+                "ScatterplotLayer", data=report_points,
+                get_position="[longitude, latitude]", get_radius=900,
+                get_fill_color=[220, 50, 50, 220], pickable=True
+            )
+        )
+
+    deck = pdk.Deck(
+        layers=layers,
+        initial_view_state=pdk.ViewState(
+            latitude=13.45, longitude=32.35, zoom=7, pitch=0
+        ),
+        map_style="light",
+        tooltip={"text": "{name}\n{kind}"}
+    )
+    st.pydeck_chart(deck, use_container_width=True)
+
+    if report_points.empty:
+        st.info("الخريطة تعرض مواقع المدن والمحليات. ستظهر البلاغات بعلامات حمراء بعد تسجيلها بإحداثيات.")
+    else:
+        st.subheader("البلاغات المسجلة في الولاية")
+        for _, row in report_points.iterrows():
+            st.write(
+                f"📍 **{row['name']}** — "
+                f"{translate_category(row.get('category', 'Other'))} — "
+                f"{translate_status(row.get('status', 'Pending'))}"
+            )
 
 # =====================================================
 # AI INTELLIGENCE
