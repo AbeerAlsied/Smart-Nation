@@ -10,6 +10,8 @@ import hmac
 import os
 import hashlib
 import secrets
+import re
+import unicodedata
 from datetime import datetime
 
 # =====================================================
@@ -38,7 +40,7 @@ translations = {
         "no_reports": "No reports have been submitted yet.", "report_title": "Submit a Smart City Report",
         "full_name": "Full Name", "email": "Email Address", "user_type": "User Type",
         "citizen": "Citizen", "student": "Student", "employee": "Employee", "other": "Other",
-        "category": "Category", "description": "Description", "location": "Location",
+        "category": "Category", "description": "Description", "location": "Location", "auto_detect": "Automatic detection",
         "latitude": "Latitude", "longitude": "Longitude", "priority": "Priority",
         "normal": "Normal", "urgent": "Urgent", "submit": "Submit Report",
         "report_success": "Your report has been submitted successfully!",
@@ -78,7 +80,12 @@ translations = {
         "report_owner_note": "Your report will be linked to your digital identity.",
         "report_saved": "Your report was saved and linked to your account.",
         "identity_created_at": "Identity Created", "account": "Account",
-        "identity_registration_note": "Create an account to receive a digital identity and follow your reports.",
+        "identity_registration_note": "Step 1: Create your account. Step 2: Verify your digital identity. Step 3: Submit reports.",
+        "verify_before_report": "Please verify your digital identity before submitting a report.",
+        "verify_my_identity": "Verify my identity",
+        "identity_verified": "Your digital identity has been verified. You can now submit reports.",
+        "identity_not_logged": "Log in with your account first, then verify your identity.",
+        "dialect_note": "The analyzer recognizes common Arabic expressions and some Sudanese colloquial words. Describe the issue clearly; the result is a suggestion.",
         "logout_account": "Log out of account", "status_tracking": "Report Status Tracking"
     },
     "العربية": {
@@ -94,7 +101,7 @@ translations = {
         "no_reports": "لا توجد بلاغات حتى الآن.", "report_title": "إرسال بلاغ للمدينة الذكية",
         "full_name": "الاسم الكامل", "email": "البريد الإلكتروني", "user_type": "نوع المستخدم",
         "citizen": "مواطن", "student": "طالب", "employee": "موظف", "other": "أخرى",
-        "category": "التصنيف", "description": "وصف البلاغ", "location": "الموقع",
+        "category": "التصنيف", "description": "وصف البلاغ", "location": "الموقع", "auto_detect": "التصنيف التلقائي",
         "latitude": "خط العرض", "longitude": "خط الطول", "priority": "الأولوية",
         "normal": "عادي", "urgent": "عاجل", "submit": "إرسال البلاغ",
         "report_success": "تم إرسال البلاغ بنجاح!", "report_error": "يرجى تعبئة جميع الحقول المطلوبة.",
@@ -135,7 +142,12 @@ translations = {
         "report_owner_note": "سيتم ربط البلاغ بهويتك الرقمية.",
         "report_saved": "تم حفظ البلاغ وربطه بحسابك.",
         "identity_created_at": "تاريخ إنشاء الهوية", "account": "الحساب",
-        "identity_registration_note": "أنشئ حساباً للحصول على هوية رقمية ومتابعة بلاغاتك.",
+        "identity_registration_note": "الخطوة 1: أنشئ حسابك. الخطوة 2: تحقّق من هويتك الرقمية. الخطوة 3: أرسل البلاغات.",
+        "verify_before_report": "يرجى التحقق من هويتك الرقمية أولاً قبل إرسال البلاغ.",
+        "verify_my_identity": "التحقق من هويتي",
+        "identity_verified": "تم التحقق من هويتك الرقمية. يمكنك الآن إرسال البلاغات.",
+        "identity_not_logged": "سجّل الدخول إلى حسابك أولاً، ثم تحقّق من هويتك.",
+        "dialect_note": "النظام يتعرّف على تعبيرات عربية دارجة وبعض الكلمات باللهجة السودانية. اشرح المشكلة بوضوح، والنتيجة تظل اقتراحاً قابلاً للمراجعة.",
         "logout_account": "تسجيل الخروج من الحساب", "status_tracking": "متابعة حالة البلاغ"
     }
 }
@@ -241,22 +253,86 @@ def verify_password(password, stored_hash):
 # CLASSIFICATION AND QR
 # =====================================================
 
+def normalize_text(value):
+    """Normalize Arabic/English text to make rule matching more reliable."""
+    text = str(value or "").lower().strip()
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"[\u064b-\u065f\u0670]", "", text)  # Arabic diacritics
+    text = text.replace("ـ", "")  # Tatweel
+    text = text.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي", "ة": "ه"}))
+    return re.sub(r"\s+", " ", text)
+
+
 def analyze_report(description):
-    text = description.lower()
+    """Dialect-aware rule classifier. It supports common Arabic and Sudanese terms,
+    but remains a rules-based prototype rather than a trained ML model.
+    """
+    text = normalize_text(description)
     categories = {
-        "Electricity": ["electricity", "power", "light", "electric", "كهرباء", "إنارة", "انقطاع", "تيار"],
-        "Water": ["water", "leak", "pipe", "drinking water", "مياه", "ماء", "تسريب", "ماسورة", "أنبوب"],
-        "Cleaning": ["garbage", "waste", "trash", "cleaning", "نفايات", "قمامة", "نظافة", "مخلفات"],
-        "Roads": ["road", "pothole", "street", "asphalt", "شارع", "حفرة", "طريق", "أسفلت"]
+        "Electricity": [
+            "electricity", "power outage", "power", "light", "electric", "كهرباء", "كهربا",
+            "النور قاطع", "الكهربا قاطعه", "الكهرباء قاطعه", "اناره", "انقطاع التيار",
+            "تيار", "عمود كهرباء", "عمود كهربا", "اسلاك", "سلك عريان", "سلك مكشوف",
+            "اللمبات طافيه", "الشارع ضلمه", "الشارع مظلم"
+        ],
+        "Water": [
+            "water", "leak", "pipe", "drinking water", "مياه", "موية", "مويا", "مويه",
+            "موية قاطعه", "الموية قاطعه", "المويه قاطعه", "الموية ضعيفه", "حنفيه",
+            "حنفية", "تسريب", "ماسوره", "ماسورة", "انبوب", "انقطاع المياه", "صرف صحي",
+            "المجاري", "طفح المجاري", "موية متسربه"
+        ],
+        "Cleaning": [
+            "garbage", "waste", "trash", "cleaning", "نفايات", "قمامه", "زباله", "زبل",
+            "وسخ", "اوساخ", "كوشه", "نظافه", "مخلفات", "تراكم القمامه", "الشارع مليان زباله",
+            "الزباله متراكمه", "ريحة كريهه", "روائح كريهه"
+        ],
+        "Roads": [
+            "road", "pothole", "street", "asphalt", "شارع", "شوارع", "حفره", "حفرة",
+            "طريق", "اسفلت", "اسفلت مكسر", "الشارع مكسر", "الشارع محفّر", "شارع محفّر",
+            "مطب", "مطبات", "رصيف", "اشاره مرور", "اشارة مرور", "الشارع متكسر"
+        ]
     }
-    category = "Other"
-    for name, keywords in categories.items():
-        if any(word in text for word in keywords):
-            category = name
-            break
-    urgent_words = ["urgent", "emergency", "danger", "fire", "explosion", "accident",
-                    "عاجل", "طوارئ", "خطير", "حريق", "انفجار", "حادث", "خطر"]
-    priority = "Urgent" if any(word in text for word in urgent_words) else "Normal"
+    scores = {name: sum(2 if len(word) > 4 else 1 for word in words if word in text)
+              for name, words in categories.items()}
+    best_category = max(scores, key=scores.get)
+    category = best_category if scores[best_category] > 0 else "Other"
+
+    urgent_phrases = [
+        "urgent", "emergency", "life threatening", "dangerous", "major accident",
+        "fire", "smoke", "explosion", "fallen power line", "live wire",
+        "عاجل", "طوارئ", "خطر", "خطير", "حريق", "دخان", "انفجار", "حادث",
+        "اسلاك كهرباء ساقطه", "سلك كهرباء ساقط", "عمود كهرباء ساقط", "عمود واقع",
+        "سلك عريان", "سلك مكشوف", "صعق كهربائي", "موية ملوثه", "مياه ملوثه",
+        "تلوث مياه", "انهيار", "اغلاق الطريق بالكامل", "ماسوره انفجرت",
+        "ماسورة انفجرت", "الموية داخله البيوت", "المياه داخله البيوت"
+    ]
+    impact_phrases = [
+        "entire area", "whole neighborhood", "many houses", "large area",
+        "blocked completely", "causing accidents", "people injured",
+        "الحي بالكامل", "المنطقه بالكامل", "كل المنطقه", "كل الحي", "منازل كثيره",
+        "عدد كبير", "بيوت كتيره", "الناس كلها", "يسبب حوادث", "يعرض الناس للخطر",
+        "يهدد السلامه", "اغلاق كامل", "انقطاع كامل", "قاطع من الصباح", "من امبارح"
+    ]
+    moderate_phrases = [
+        "outage", "no water", "no electricity", "overflow", "flooding",
+        "broken pipe", "large hole", "انقطاع", "الموية قاطعه", "المويه قاطعه",
+        "مافي موية", "مافي مياه", "مافي كهرباء", "مافي كهربا", "الكهربا قاطعه",
+        "بدون مياه", "بدون كهرباء", "طفح", "غرق", "ماسوره مكسوره", "ماسورة مكسورة",
+        "حفره كبيره", "تسرب كبير", "تراكم كبير", "الشارع مكسر"
+    ]
+
+    urgency_score = 0
+    for phrase in urgent_phrases:
+        if phrase in text:
+            urgency_score += 3
+    for phrase in impact_phrases:
+        if phrase in text:
+            urgency_score += 2
+    for phrase in moderate_phrases:
+        if phrase in text:
+            urgency_score += 1
+
+    priority = "Urgent" if urgency_score >= 3 else "Normal"
     return category, priority
 
 def generate_qr(data):
@@ -309,8 +385,8 @@ st.divider()
 # NAVIGATION
 # =====================================================
 
-pages = ["dashboard", "submit_report", "my_services", "manage_reports",
-         "digital_identities", "verify_identity", "city_map", "ai_intelligence"]
+pages = ["digital_identities", "verify_identity", "submit_report", "my_services",
+         "dashboard", "city_map", "ai_intelligence", "manage_reports"]
 page_labels = [t(page) for page in pages]
 selected_label = st.sidebar.radio(t("navigation"), page_labels)
 selected_page = pages[page_labels.index(selected_label)]
@@ -413,6 +489,7 @@ elif selected_page == "digital_identities":
                 conn.commit()
                 conn.close()
                 st.session_state["citizen_identity_code"] = identity_code
+                st.session_state["citizen_identity_verified"] = False
                 st.session_state["new_identity_code"] = identity_code
                 st.success(t("identity_success"))
                 st.success(t("account_created"))
@@ -452,6 +529,7 @@ elif selected_page == "my_services":
         st.code(identity[0])
         if st.button(t("logout_account")):
             st.session_state.pop("citizen_identity_code", None)
+            st.session_state.pop("citizen_identity_verified", None)
             st.rerun()
 
         st.divider()
@@ -490,6 +568,7 @@ elif selected_page == "my_services":
             conn.close()
             if account and account[1] and verify_password(login_password, account[1]):
                 st.session_state["citizen_identity_code"] = account[0]
+                st.session_state["citizen_identity_verified"] = False
                 st.success(t("account_created"))
                 st.rerun()
             else:
@@ -506,6 +585,9 @@ elif selected_page == "submit_report":
     if not identity:
         st.warning(t("login_required"))
         st.info("Open " + t("my_services") + " and log in, or create a digital identity first.")
+    elif not st.session_state.get("citizen_identity_verified", False):
+        st.warning(t("verify_before_report"))
+        st.info("1. " + t("digital_identities") + "  →  2. " + t("verify_identity") + "  →  3. " + t("submit_report"))
     else:
         st.success(f"{t('welcome')}, {identity[1]}")
         st.caption(t("report_owner_note"))
@@ -544,8 +626,11 @@ elif selected_page == "submit_report":
         default_lon = float(st.session_state.get("report_longitude", 32.5000))
         with st.form("report_form"):
             location = st.text_input(t("location"))
-            category_options = ["Electricity", "Water", "Cleaning", "Roads", "Other"]
-            category = st.selectbox(t("category"), category_options, format_func=translate_category)
+            category_options = ["Auto", "Electricity", "Water", "Cleaning", "Roads", "Other"]
+            category = st.selectbox(
+                t("category"), category_options,
+                format_func=lambda value: t("auto_detect") if value == "Auto" else translate_category(value)
+            )
             description = st.text_area(t("description"))
             c1, c2 = st.columns(2)
             with c1:
@@ -556,7 +641,7 @@ elif selected_page == "submit_report":
         if submitted:
             if location.strip() and description.strip():
                 predicted_category, priority = analyze_report(description)
-                final_category = predicted_category if category == "Other" else category
+                final_category = predicted_category if category in ("Auto", "Other") else category
                 report_code = str(uuid.uuid4())
                 conn = get_connection()
                 cur = conn.cursor()
@@ -639,21 +724,47 @@ elif selected_page == "manage_reports":
 
 elif selected_page == "verify_identity":
     st.header("🔍 " + t("verify_title"))
+    signed_identity = current_identity()
+
+    if signed_identity:
+        st.subheader(t("account") + ": " + signed_identity[1])
+        if st.session_state.get("citizen_identity_verified", False):
+            st.success(t("identity_verified"))
+        elif st.button(t("verify_my_identity")):
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT identity_code FROM identities WHERE identity_code = ?", (signed_identity[0],))
+            valid = cur.fetchone()
+            conn.close()
+            if valid:
+                st.session_state["citizen_identity_verified"] = True
+                st.success(t("identity_verified"))
+                st.rerun()
+            else:
+                st.error(t("invalid_identity"))
+    else:
+        st.info(t("identity_not_logged"))
+
+    st.divider()
+    st.subheader(t("verify_title"))
     identity_code = st.text_input(t("enter_code"))
-    if st.button(t("verify")):
+    if st.button(t("verify"), key="verify_identity_code"):
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT full_name, email, user_type, created_at FROM identities WHERE identity_code = ?",
+        cur.execute("SELECT identity_code, full_name, email, user_type, created_at FROM identities WHERE identity_code = ?",
                     (identity_code.strip(),))
         result = cur.fetchone()
         conn.close()
         if result:
             st.success(t("valid_identity"))
             st.subheader(t("identity_details"))
-            st.write(f"**{t('full_name')}:** {result[0]}")
-            st.write(f"**{t('email')}:** {result[1]}")
-            st.write(f"**{t('user_type')}:** {t(result[2].lower()) if result[2] else ''}")
-            st.write(f"**{t('created_at')}:** {result[3]}")
+            st.write(f"**{t('full_name')}:** {result[1]}")
+            st.write(f"**{t('email')}:** {result[2]}")
+            st.write(f"**{t('user_type')}:** {t(result[3].lower()) if result[3] else ''}")
+            st.write(f"**{t('created_at')}:** {result[4]}")
+            if signed_identity and result[0] == signed_identity[0]:
+                st.session_state["citizen_identity_verified"] = True
+                st.success(t("identity_verified"))
         else:
             st.error(t("invalid_identity"))
 
@@ -682,6 +793,7 @@ elif selected_page == "city_map":
 elif selected_page == "ai_intelligence":
     st.header("🤖 " + t("ai_title"))
     st.write(t("ai_description"))
+    st.caption(t("dialect_note"))
     description = st.text_area(t("description"), height=150)
     if st.button(t("analyze")):
         if description.strip():
