@@ -13,12 +13,13 @@ import hashlib
 import secrets
 import re
 import unicodedata
+import time
 from datetime import datetime
 
 # =====================================================
 # CONFIGURATION
 # =====================================================
-st.set_page_config(page_title="NWS", page_icon="🌍", layout="wide")
+st.set_page_config(page_title="WNS", page_icon="🌍", layout="wide")
 DB_NAME = "smart_nation.db"
 
 # =====================================================
@@ -26,7 +27,7 @@ DB_NAME = "smart_nation.db"
 # =====================================================
 translations = {
     "English": {
-        "app_title":"NWS","subtitle":"Integrated Digital Transformation Platform",
+        "app_title":"WNS","subtitle":"Integrated Digital Transformation Platform",
         "navigation":"Navigation","dashboard":"Dashboard & Analytics","submit_report":"Submit Report",
         "manage_reports":"Manage Reports","digital_identities":"Digital Identities",
         "verify_identity":"Verify Identity","my_services":"My Services","city_map":"City Map",
@@ -59,7 +60,7 @@ translations = {
         "analyze":"Analyze Report","analysis_result":"Analysis Result","electricity":"Electricity",
         "water":"Water","cleaning":"Cleaning","roads":"Roads","other_category":"Other",
         "classification_note":"This prototype uses keyword-based rules. It is not a trained machine-learning model.",
-        "footer":"NWS | النيل الأبيض الذكية | Integrated Digital Transformation Platform",
+        "footer":"WNS | النيل الأبيض الذكية | Integrated Digital Transformation Platform",
         "report_details":"Report Details","enter_description":"Please enter a description.",
         "category_result":"Predicted Category","priority_result":"Predicted Priority",
         "identity_details":"Identity Details","identity_exists":"An identity with this email already exists.",
@@ -81,7 +82,7 @@ translations = {
         "logout_account":"Log out of account","status_tracking":"Report Status Tracking"
     },
     "العربية": {
-        "app_title":"النيل الأبيض الذكية","subtitle":"منصة التحول الرقمي المتكاملة",
+        "app_title":"النيل الأبيض الذكية (WNS)","subtitle":"منصة التحول الرقمي المتكاملة",
         "navigation":"القائمة الرئيسية","dashboard":"لوحة التحكم والتحليلات","submit_report":"إرسال بلاغ",
         "manage_reports":"إدارة البلاغات","digital_identities":"الهويات الرقمية",
         "verify_identity":"التحقق من الهوية","my_services":"خدماتي وبلاغاتي","city_map":"خريطة المدينة",
@@ -116,7 +117,7 @@ translations = {
         "analysis_result":"نتيجة التحليل","electricity":"الكهرباء","water":"المياه",
         "cleaning":"النظافة","roads":"الطرق","other_category":"أخرى",
         "classification_note":"هذا النموذج الأولي يعتمد على الكلمات المفتاحية والقواعد، وليس نموذج تعلم آلي مدرباً.",
-        "footer":"النيل الأبيض الذكية | منصة التحول الرقمي المتكاملة","report_details":"تفاصيل البلاغ",
+        "footer":"النيل الأبيض الذكية (WNS) | منصة التحول الرقمي المتكاملة","report_details":"تفاصيل البلاغ",
         "enter_description":"يرجى إدخال وصف البلاغ.","category_result":"التصنيف المتوقع",
         "priority_result":"الأولوية المتوقعة","identity_details":"تفاصيل الهوية",
         "identity_exists":"توجد هوية مسجلة بهذا البريد الإلكتروني بالفعل.","select_status":"اختر الحالة",
@@ -220,10 +221,10 @@ def load_identities():
 
 def load_admin_notifications(unread_only=False):
     conn = get_connection()
-    query = "SELECT * FROM admin_notifications"
+    query = "SELECT n.*, r.category, r.description as report_desc, r.location as report_loc, r.priority, r.status FROM admin_notifications n LEFT JOIN reports r ON n.report_id = r.id"
     if unread_only:
-        query += " WHERE is_read = 0"
-    query += " ORDER BY id DESC"
+        query += " WHERE n.is_read = 0"
+    query += " ORDER BY n.id DESC"
     df = pd.read_sql_query(query, conn)
     conn.close()
     return df
@@ -392,7 +393,6 @@ pages = [
 ]
 page_labels = [t(page) for page in pages]
 
-# A page key is stored, not a translated label. This also works after language changes.
 if "navigation_target" in st.session_state:
     target_page = st.session_state.pop("navigation_target")
     if target_page in pages:
@@ -729,7 +729,7 @@ elif selected_page == "submit_report":
                 st.error(t("report_error"))
 
 # =====================================================
-# ADMIN REPORT MANAGEMENT
+# ADMIN REPORT MANAGEMENT (WITH REAL-TIME NOTIFICATIONS)
 # =====================================================
 elif selected_page == "manage_reports":
     st.header("⚙️ " + t("manage_title"))
@@ -752,56 +752,77 @@ elif selected_page == "manage_reports":
             else:
                 st.error(t("wrong_password"))
     else:
-        unread_notifications = load_admin_notifications(unread_only=True)
-        all_notifications = load_admin_notifications()
-        st.subheader(
-            "🔔 إشعارات المسؤول" if st.session_state.language == "العربية"
-            else "🔔 Admin Notifications"
-        )
-        if not unread_notifications.empty:
-            st.error(
-                f"لديك {len(unread_notifications)} إشعار جديد ببلاغات مقدمة."
-                if st.session_state.language == "العربية"
-                else f"You have {len(unread_notifications)} new report notification(s)."
-            )
-            for _,notification in unread_notifications.iterrows():
-                with st.container(border=True):
-                    st.markdown(f"**{notification['title']}**")
-                    st.write(notification["message"])
-                    st.caption(notification["created_at"])
-            if st.button(
-                "تحديد كل الإشعارات كمقروءة"
-                if st.session_state.language == "العربية" else "Mark all as read",
-                key="mark_notifications_read"
-            ):
-                mark_notifications_read()
-                st.rerun()
-        else:
-            st.success(
-                "لا توجد إشعارات جديدة." if st.session_state.language == "العربية"
-                else "There are no new notifications."
-            )
-
-        with st.expander(
-            "سجل الإشعارات" if st.session_state.language == "العربية"
-            else "Notification history"
-        ):
-            if all_notifications.empty:
-                st.info(
-                    "لا توجد إشعارات بعد." if st.session_state.language == "العربية"
-                    else "No notifications yet."
-                )
-            else:
-                for _,notification in all_notifications.iterrows():
-                    status_label = "مقروء" if notification["is_read"] else "جديد"
-                    st.write(
-                        f"🔔 **{notification['title']}** — {notification['message']}"
-                    )
-                    st.caption(f"{notification['created_at']} · {status_label}")
-
         if st.button(t("logout"),key="admin_logout_button"):
             st.session_state.admin_logged_in = False
             st.rerun()
+
+        @st.fragment
+        def render_admin_notifications_section():
+            # Auto-refresh fragment every 10 seconds
+            time.sleep(10)
+            st.rerun()
+
+            unread_notifications = load_admin_notifications(unread_only=True)
+            all_notifications = load_admin_notifications()
+            unread_count = len(unread_notifications)
+
+            # Notification Header with Counter Badge
+            header_text = (
+                f"🔔 إشعارات المسؤول ({unread_count} جديدة)" if st.session_state.language == "العربية"
+                else f"🔔 Admin Notifications ({unread_count} new)"
+            )
+            st.subheader(header_text)
+
+            if unread_count > 0:
+                st.error(
+                    f"لديك {unread_count} إشعار جديد ببلاغات مقدمة."
+                    if st.session_state.language == "العربية"
+                    else f"You have {unread_count} new report notification(s)."
+                )
+                for _, notification in unread_notifications.iterrows():
+                    with st.container(border=True):
+                        st.markdown(f"**{notification['title']}**")
+                        st.write(notification["message"])
+                        if pd.notna(notification.get("report_desc")):
+                            st.markdown(f"**{t('description')}:** {notification['report_desc']}")
+                            st.markdown(f"**{t('location')}:** {notification['report_loc']}")
+                            st.markdown(f"**{t('category')}:** {translate_category(notification['category'])}")
+                        st.caption(notification["created_at"])
+                
+                if st.button(
+                    "تحديد كل الإشعارات كمقروءة"
+                    if st.session_state.language == "العربية" else "Mark all as read",
+                    key="mark_notifications_read_btn"
+                ):
+                    mark_notifications_read()
+                    st.rerun()
+            else:
+                st.success(
+                    "لا توجد إشعارات جديدة." if st.session_state.language == "العربية"
+                    else "There are no new notifications."
+                )
+
+            with st.expander(
+                "سجل الإشعارات" if st.session_state.language == "العربية"
+                else "Notification history"
+            ):
+                if all_notifications.empty:
+                    st.info(
+                        "لا توجد إشعارات بعد." if st.session_state.language == "العربية"
+                        else "No notifications yet."
+                    )
+                else:
+                    for _, notification in all_notifications.iterrows():
+                        status_label = "مقروء" if notification["is_read"] else "جديد"
+                        st.write(
+                            f"🔔 **{notification['title']}** — {notification['message']}"
+                        )
+                        if pd.notna(notification.get("report_desc")):
+                            st.caption(f"التفاصيل: {notification['report_desc']} | الموقع: {notification['report_loc']}")
+                        st.caption(f"{notification['created_at']} · {status_label}")
+
+        render_admin_notifications_section()
+        st.divider()
 
         reports = load_reports()
         if reports.empty:
@@ -1028,6 +1049,6 @@ if selected_page in citizen_steps:
 st.divider()
 st.markdown(
     f"""<div style="text-align:center;color:gray;padding:15px;">
-    🌍 {t("footer")}<br><small>NWS Prototype</small></div>""",
+    🌍 {t("footer")}<br><small>WNS Prototype</small></div>""",
     unsafe_allow_html=True
 )
