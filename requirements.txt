@@ -1,6 +1,7 @@
 streamlit
 pandas
 plotly
+pydeck
 qrcode[pil]
 Pillow
 streamlit-geolocation==0.0.10
