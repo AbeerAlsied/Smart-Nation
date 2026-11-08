@@ -948,16 +948,8 @@ def smart_assistant(question):
     # 1. Direct intent recognition for general actions
     if any(x in text for x in ["كيف ارسل", "تقديم بلاغ", "طريقة البلاغ", "كيف اشتكي", "ارسل بلاغ", "اعمل بلاغ", "خطوات البلاغ"]):
         return label(
-            "لإرسال بلاغ جديد:
-1. سجل دخولك أو أنشئ هوية رقمية من صفحة (الهويات الرقمية).
-2. افتح صفحة (إرسال بلاغ).
-3. اختر منطقتك واكتب وصف المشكلة بالتفصيل.
-4. سيتكفل النظام بتوجيه البلاغ تلقائياً للجهة الحكومية المختصة مع تحديد درجة الخطورة.",
-            "To submit a new report:
-1. Log in or create a digital identity.
-2. Open (Submit Report).
-3. Select location and describe the issue.
-4. System auto-routes to the proper authority."
+            "لإرسال بلاغ جديد:\n1. سجل دخولك أو أنشئ هوية رقمية من صفحة (الهويات الرقمية).\n2. افتح صفحة (إرسال بلاغ).\n3. اختر منطقتك واكتب وصف المشكلة بالتفصيل.\n4. سيتكفل النظام بتوجيه البلاغ تلقائياً للجهة الحكومية المختصة مع تحديد درجة الخطورة.",
+            "To submit a new report:\n1. Log in or create a digital identity.\n2. Open (Submit Report).\n3. Select location and describe the issue.\n4. System auto-routes to the proper authority."
         )
 
     if any(x in text for x in ["متابعة", "متابعه", "اين بلاغي", "حالة البلاغ", "تتبع", "بلاغاتي", "نتيجة البلاغ"]):
@@ -2005,9 +1997,9 @@ elif selected_page == "manage_reports":
                 hide_index=True
             )
 
-                        # Quick seeding of department accounts
+            # Quick seeding of department accounts
             with st.expander(label("⚡ إنشاء حسابات الجهات التلقائية", "Generate Default Department Accounts")):
-                st.info(label("توليد حسابات افتراضية لجميع الهجهات الحكومية المسجلة (مثال: electricity_user / electricity12345)", "Generate default accounts for all departments"))
+                st.info(label("توليد حسابات افتراضية لجميع الجهات الحكومية المسجلة", "Generate default accounts for all departments"))
                 if st.button(label("توليد الحسابات الافتراضية الآن", "Generate Default Accounts Now")):
                     count = seed_default_departments()
                     if count > 0:
@@ -2197,8 +2189,24 @@ elif selected_page == "manage_reports":
 
         with tab2:
 
+            st.info(label("💡 أسماء المستخدمين وكلمات المرور الافتراضية للجهات (من 11 إلى 1):", "Default accounts (11 to 1):"))
+            st.markdown("""
+            1. **هيئة الكهرباء:** `electricity_user` / `electricity12345`
+            2. **هيئة المياه:** `water_user` / `water12345`
+            3. **إدارة النظافة:** `cleaning_user` / `cleaning12345`
+            4. **إدارة الطرق والجسور:** `roads_user` / `roads12345`
+            5. **إدارة الصرف الصحي:** `sewage_user` / `sewage12345`
+            6. **إدارة الصحة:** `health_user` / `health12345`
+            7. **إدارة البيئة:** `environment_user` / `environment12345`
+            8. **الدفاع المدني:** `emergency_user` / `emergency12345`
+            9. **شرطة المرور:** `traffic_user` / `traffic12345`
+            10. **إدارة التعليم:** `education_user` / `education12345`
+            11. **غرفة المتابعة العامة:** `other_user` / `other12345`
+            """)
+
             username = st.text_input(
-                label("اسم المستخدم", "Username")
+                label("اسم المستخدم", "Username"),
+                key="dept_username_input"
             )
 
             password = st.text_input(
@@ -2215,7 +2223,10 @@ elif selected_page == "manage_reports":
 
                 else:
 
-                    st.error(label("اسم المستخدم أو كلمة المرور غير صحيحة.", "Incorrect username or password."))
+                    st.error(label(
+                        "اسم المستخدم أو كلمة المرور غير صحيحة.",
+                        "Incorrect username or password."
+                    ))
 
 
 # =====================================================
