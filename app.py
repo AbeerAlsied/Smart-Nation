@@ -203,8 +203,8 @@ DEPARTMENTS = {
         "icon": "🏫"
     },
     "Other": {
-        "ar": "غرفة المتابعة العامة",
-        "en": "General Follow-up Office",
+        "ar": "غرفة المتابعة والشرطة العامة",
+        "en": "General Follow-up & Police Office",
         "icon": "📋"
     }
 }
@@ -496,9 +496,10 @@ CATEGORY_KEYWORDS = {
     ],
 
     "Health": [
-        "مستشفى", "مركز صحي", "مرض",
-        "عياده", "صحه", "ادويه",
-        "hospital", "health", "clinic"
+        "مستشفى", "مركز صحي", "مرض", "وباء", "كوليرا", "اسهالات",
+        "اسهال", "إسهال", "إسهالات", "تسمم", "عياده", "صحه", "ادويه",
+        "فيروس", "عدوى", "حمى", "علاج", "اصابات",
+        "hospital", "health", "clinic", "cholera", "epidemic"
     ],
 
     "Environment": [
@@ -524,6 +525,12 @@ CATEGORY_KEYWORDS = {
         "مدرسه", "مدارس", "تعليم",
         "فصل دراسي", "معلم", "مدرس",
         "school", "education"
+    ],
+
+    "Other": [
+        "جريمة", "جريمه", "سرقة", "سرقه", "اعتداء", "شجار", "احتيال",
+        "نهب", "تهديد", "شرطة", "شرطه", "بلاغ جنائي", "مشاجرة", "أمن",
+        "حرامي", "سطو", "crime", "theft", "police", "robbery"
     ]
 }
 
@@ -532,15 +539,16 @@ CRITICAL_TERMS = [
     "حريق", "نار", "انفجار", "صعق",
     "سلك عريان", "سلك مكشوف", "سلك واقع",
     "عمود واقع", "عمود ساقط", "انهيار",
-    "غرق", "فيضان", "تسمم",
-    "fire", "explosion", "emergency"
+    "غرق", "فيضان", "تسمم", "وباء", "كوليرا",
+    "سرقة", "جريمة", "قتل", "سطو",
+    "fire", "explosion", "emergency", "crime"
 ]
 
 URGENT_TERMS = [
     "انقطاع المياه", "انقطاع الكهرباء",
     "المويه قاطعه", "النور قاطع",
     "ماسوره مكسوره", "طفح المجاري",
-    "تسرب كبير", "حادث",
+    "تسرب كبير", "حادث", "اسهالات",
     "no water", "no electricity"
 ]
 
@@ -960,7 +968,7 @@ def smart_assistant(question):
 
     if any(x in text for x in ["جهة", "جهات", "مسؤول", "من يتعامل", "مين المسؤول", "اختصاص"]):
         return label(
-            "تقوم المنصة بربط البلاغات تلقائياً بالجهات المعنية (مثل: هيئة المياه، هيئة الكهرباء، إدارة النظافة، الطرق، الصحة، المرور، الدفاع المدني) حسب الكلمات ومضمون الوصف.",
+            "تقوم المنصة بربط البلاغات تلقائياً بالجهات المعنية (مثل: هيئة المياه، هيئة الكهرباء، إدارة النظافة، الطرق، الصحة، المرور، الدفاع المدني، غرف الشرطة والمتابعة) حسب الكلمات ومضمون الوصف.",
             "The platform automatically maps reports to responsible departments based on intelligent text evaluation."
         )
 
@@ -985,7 +993,7 @@ def smart_assistant(question):
         # If user asks about multiple categories in one question
         if len(sorted_cats) > 1 and sorted_cats[1][1] > 0:
             second_cat = sorted_cats[1][0]
-            second_dept = DEPARTMENTS[sorted_cats[second_cat] if second_cat in DEPARTMENTS else "Other"]["ar"] if AR else DEPARTMENTS[second_cat]["en"]
+            second_dept = DEPARTMENTS[second_cat if second_cat in DEPARTMENTS else "Other"]["ar"] if AR else DEPARTMENTS[second_cat]["en"]
             return label(
                 f"سؤالك يتعلق بأكثر من موضوع! البلاغات الخاصة بـ ({matched_details[top_cat][0]}) تتبع لـ **{dept_name}**، بينما موضوع ({matched_details[second_cat][0]}) يتبع لـ **{second_dept}**. يمكنك تقديم بلاغ منفصل لكل مشكلة لضمان سرعة المعالجة.",
                 f"Your query covers multiple entities: {dept_name} and {second_dept}. Please file individual reports for effective handling."
@@ -998,8 +1006,8 @@ def smart_assistant(question):
 
     # 3. Intelligent fallback for open / non-keyword questions
     return label(
-        "أنا مساعد النيل الأبيض الذكي 🌍. يمكنك استفساري عن طريقة تقديم البلاغات، متابعة حالة طلبك، أو السؤال عن أي مشكلة (كهرباء، مياه، طرق، نظافة، صحة، مرور، دفاع مدني...) وسأرشيدك للجهة المختصة فوراً.",
-        "I am White Nile Smart Assistant. Ask me about submitting reports, tracking status, or inquiring about any service (Water, Power, Roads, Sanitation, Health, Traffic...) and I will guide you!"
+        "أنا مساعد النيل الأبيض الذكي 🌍. يمكنك استفساري عن طريقة تقديم البلاغات، متابعة حالة طلبك، أو السؤال عن أي مشكلة (كهرباء، مياه، طرق، نظافة، صحة، كوليرا/أوبئة، جرائم/أمن، مرور، دفاع مدني...) وسأرشيدك للجهة المختصة فوراً.",
+        "I am White Nile Smart Assistant. Ask me about submitting reports, tracking status, or inquiring about any service and I will guide you!"
     )
 
 
@@ -1740,8 +1748,8 @@ elif selected_page == "assistant":
     question = st.text_area(
         label("كيف يمكنني مساعدتك؟", "How can I help you?"),
         placeholder=label(
-            "مثال: أين أبلغ عن انقطاع المياه؟",
-            "Example: Where can I report a water outage?"
+            "مثال: أين أبلغ عن انقطاع المياه أو انتشار الكوليرا؟",
+            "Example: Where can I report a water outage or cholera outbreak?"
         )
     )
 
@@ -2201,7 +2209,7 @@ elif selected_page == "manage_reports":
             8. **الدفاع المدني:** `emergency_user` / `emergency12345`
             9. **شرطة المرور:** `traffic_user` / `traffic12345`
             10. **إدارة التعليم:** `education_user` / `education12345`
-            11. **غرفة المتابعة العامة:** `other_user` / `other12345`
+            11. **غرفة المتابعة والشرطة العامة:** `other_user` / `other12345`
             """)
 
             username = st.text_input(
@@ -2254,3 +2262,4 @@ Smart Government • AI • Digital Services • Smart Notifications
 
 </div>
 """, unsafe_allow_html=True)
+
