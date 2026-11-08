@@ -359,6 +359,28 @@ def initialize_database():
             VALUES (?,?,?)
         """, (key, item["ar"], item["en"]))
 
+    # Backfill/Fix old unassigned reports
+    rows = conn.execute("SELECT id, category, description FROM reports WHERE department_id IS NULL OR department_id = '' OR department_name IS NULL OR department_name = ''").fetchall()
+    for r_id, r_cat, r_desc in rows:
+        cat = r_cat
+        if not cat or cat == 'Auto':
+            text = normalize_text(r_desc)
+            scores = {}
+            for c_key, words in CATEGORY_KEYWORDS.items():
+                matched = [w for w in words if normalize_text(w) in text]
+                scores[c_key] = len(matched)
+            cat = max(scores, key=scores.get) if scores and max(scores.values()) > 0 else "Other"
+        
+        dept_row = conn.execute("SELECT id, name_ar FROM departments WHERE department_key = ?", (cat,)).fetchone()
+        if not dept_row:
+            dept_row = conn.execute("SELECT id, name_ar FROM departments WHERE department_key = 'Other'").fetchone()
+            cat = "Other"
+            
+        if dept_row:
+            d_id, d_name = dept_row
+            conn.execute("UPDATE reports SET category=?, department_id=?, department_name=? WHERE id=?", (cat, d_id, d_name, r_id))
+
+
     # Backward compatibility for old notifications
     add_column_if_missing(
         conn, "admin_notifications", "recipient_type",
@@ -838,22 +860,18 @@ def staff_login(username, password):
     conn = get_connection()
 
     row = conn.execute("""
-        SELECT id, password_hash
+        SELECT id,password_hash
         FROM staff_users
         WHERE username=? AND is_active=1
     """, (username,)).fetchone()
 
     conn.close()
 
-    if row:
-        user_id, stored_hash = row
+    if row and verify_password(password, row[1]):
 
-        # دعم التشفير الآمن والنص العادي للطوارئ
-        if verify_password(password, stored_hash) or stored_hash == password:
+        st.session_state["staff_id"] = row[0]
 
-            st.session_state["staff_id"] = user_id
-
-            return True
+        return True
 
     return False
 
@@ -924,51 +942,72 @@ def smart_assistant(question):
 
     text = normalize_text(question)
 
-    if any(x in text for x in ["كيف ارسل", "تقديم بلاغ", "ارسل بلاغ", "submit report"]):
+    if not text:
+        return label("يرجى كتابة سؤالك لنتمكن من مساعدتك.", "Please type your question so we can assist you.")
 
+    # 1. Direct intent recognition for general actions
+    if any(x in text for x in ["كيف ارسل", "تقديم بلاغ", "طريقة البلاغ", "كيف اشتكي", "ارسل بلاغ", "اعمل بلاغ", "خطوات البلاغ"]):
         return label(
-            "يمكنك إنشاء حساب رقمي أولاً، ثم الدخول إلى صفحة إرسال بلاغ واختيار المدينة ووصف المشكلة وإرسالها.",
-            "Create an account first, then open Submit Report, select your city, describe the issue and submit it."
+            "لإرسال بلاغ جديد:
+1. سجل دخولك أو أنشئ هوية رقمية من صفحة (الهويات الرقمية).
+2. افتح صفحة (إرسال بلاغ).
+3. اختر منطقتك واكتب وصف المشكلة بالتفصيل.
+4. سيتكفل النظام بتوجيه البلاغ تلقائياً للجهة الحكومية المختصة مع تحديد درجة الخطورة.",
+            "To submit a new report:
+1. Log in or create a digital identity.
+2. Open (Submit Report).
+3. Select location and describe the issue.
+4. System auto-routes to the proper authority."
         )
 
-    if any(x in text for x in ["مياه", "موية", "ماسوره", "water"]):
-
+    if any(x in text for x in ["متابعة", "متابعه", "اين بلاغي", "حالة البلاغ", "تتبع", "بلاغاتي", "نتيجة البلاغ"]):
         return label(
-            "بلاغات المياه يتم توجيهها تلقائياً إلى هيئة مياه ولاية النيل الأبيض.",
-            "Water reports are routed to the White Nile Water Authority."
+            "يمكنك متابعة جميع بلاغاتك والتحديثات والإشعارات الصادرة من الجهات الحكومية من خلال صفحة (خدماتي وبلاغاتي) بعد تسجيل الدخول.",
+            "Track all your reports and official status updates in (My Services) after logging in."
         )
 
-    if any(x in text for x in ["كهرباء", "النور", "electricity"]):
-
+    if any(x in text for x in ["جهة", "جهات", "مسؤول", "من يتعامل", "مين المسؤول", "اختصاص"]):
         return label(
-            "بلاغات الكهرباء يتم توجيهها إلى هيئة الكهرباء.",
-            "Electricity reports are routed to the Electricity Authority."
+            "تقوم المنصة بربط البلاغات تلقائياً بالجهات المعنية (مثل: هيئة المياه، هيئة الكهرباء، إدارة النظافة، الطرق، الصحة، المرور، الدفاع المدني) حسب الكلمات ومضمون الوصف.",
+            "The platform automatically maps reports to responsible departments based on intelligent text evaluation."
         )
 
-    if any(x in text for x in ["نظافه", "نفايات", "كوشه", "garbage"]):
+    # 2. Smart scoring for departments matching multiple or single keywords
+    scores = {}
+    matched_details = {}
+
+    for cat_key, words in CATEGORY_KEYWORDS.items():
+        matched = [w for w in words if normalize_text(w) in text]
+        if matched:
+            scores[cat_key] = len(matched)
+            matched_details[cat_key] = matched
+
+    if scores:
+        # Sort categories by highest matches
+        sorted_cats = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        top_cat, top_score = sorted_cats[0]
+
+        dept_info = DEPARTMENTS.get(top_cat, DEPARTMENTS["Other"])
+        dept_name = dept_info["ar"] if AR else dept_info["en"]
+
+        # If user asks about multiple categories in one question
+        if len(sorted_cats) > 1 and sorted_cats[1][1] > 0:
+            second_cat = sorted_cats[1][0]
+            second_dept = DEPARTMENTS[sorted_cats[second_cat] if second_cat in DEPARTMENTS else "Other"]["ar"] if AR else DEPARTMENTS[second_cat]["en"]
+            return label(
+                f"سؤالك يتعلق بأكثر من موضوع! البلاغات الخاصة بـ ({matched_details[top_cat][0]}) تتبع لـ **{dept_name}**، بينما موضوع ({matched_details[second_cat][0]}) يتبع لـ **{second_dept}**. يمكنك تقديم بلاغ منفصل لكل مشكلة لضمان سرعة المعالجة.",
+                f"Your query covers multiple entities: {dept_name} and {second_dept}. Please file individual reports for effective handling."
+            )
 
         return label(
-            "بلاغات النظافة يتم توجيهها إلى إدارة النظافة بالمحلية.",
-            "Cleaning reports are routed to the local cleaning department."
+            f"بناءً على تفاصيل سؤالك، فإن هذا البلاغ/الموضوع يقع تحت اختصاص **{dept_name}** ({dept_info['icon']}). يمكنك تقديم البلاغ مباشرة وسنقوم بتوجيهه تلقائياً.",
+            f"Based on your description, this topic falls under **{dept_name}**. Submit your report and WNS will auto-route it."
         )
 
-    if any(x in text for x in ["بلاغي", "متابعه", "حاله البلاغ", "track"]):
-
-        return label(
-            "يمكنك متابعة حالة بلاغاتك من صفحة خدماتي وبلاغاتي بعد تسجيل الدخول.",
-            "Track your reports through My Services after logging in."
-        )
-
-    if any(x in text for x in ["جهات", "مسؤول", "department"]):
-
-        return label(
-            "تقوم المنصة بربط كل نوع بلاغ بالجهة الحكومية المختصة به تلقائياً.",
-            "The platform automatically routes each report to its responsible department."
-        )
-
+    # 3. Intelligent fallback for open / non-keyword questions
     return label(
-        "مرحباً بك في مساعد النيل الأبيض الذكي. يمكنني مساعدتك في معرفة الخدمات وطريقة تقديم البلاغات والجهات المختصة.",
-        "Welcome to White Nile Smart Assistant. I can help you understand services, submit reports and identify responsible departments."
+        "أنا مساعد النيل الأبيض الذكي 🌍. يمكنك استفساري عن طريقة تقديم البلاغات، متابعة حالة طلبك، أو السؤال عن أي مشكلة (كهرباء، مياه، طرق، نظافة، صحة، مرور، دفاع مدني...) وسأرشيدك للجهة المختصة فوراً.",
+        "I am White Nile Smart Assistant. Ask me about submitting reports, tracking status, or inquiring about any service (Water, Power, Roads, Sanitation, Health, Traffic...) and I will guide you!"
     )
 
 
@@ -1966,9 +2005,9 @@ elif selected_page == "manage_reports":
                 hide_index=True
             )
 
-            # Quick seeding of department accounts
+                        # Quick seeding of department accounts
             with st.expander(label("⚡ إنشاء حسابات الجهات التلقائية", "Generate Default Department Accounts")):
-                st.info(label("توليد حسابات افتراضية لجميع الجهات الحكومية المسجلة", "Generate default accounts for all departments"))
+                st.info(label("توليد حسابات افتراضية لجميع الهجهات الحكومية المسجلة (مثال: electricity_user / electricity12345)", "Generate default accounts for all departments"))
                 if st.button(label("توليد الحسابات الافتراضية الآن", "Generate Default Accounts Now")):
                     count = seed_default_departments()
                     if count > 0:
@@ -2158,24 +2197,8 @@ elif selected_page == "manage_reports":
 
         with tab2:
 
-            st.info(label("💡 أسماء المستخدمين وكلمات المرور الافتراضية للجهات (من 11 إلى 1):", "Default accounts (11 to 1):"))
-            st.markdown("""
-            1. **هيئة الكهرباء:** `electricity_user` / `electricity12345`
-            2. **هيئة المياه:** `water_user` / `water12345`
-            3. **إدارة النظافة:** `cleaning_user` / `cleaning12345`
-            4. **إدارة الطرق والجسور:** `roads_user` / `roads12345`
-            5. **إدارة الصرف الصحي:** `sewage_user` / `sewage12345`
-            6. **إدارة الصحة:** `health_user` / `health12345`
-            7. **إدارة البيئة:** `environment_user` / `environment12345`
-            8. **الدفاع المدني:** `emergency_user` / `emergency12345`
-            9. **شرطة المرور:** `traffic_user` / `traffic12345`
-            10. **إدارة التعليم:** `education_user` / `education12345`
-            11. **غرفة المتابعة العامة:** `other_user` / `other12345`
-            """)
-
             username = st.text_input(
-                label("اسم المستخدم", "Username"),
-                key="dept_username_input"
+                label("اسم المستخدم", "Username")
             )
 
             password = st.text_input(
@@ -2192,10 +2215,7 @@ elif selected_page == "manage_reports":
 
                 else:
 
-                    st.error(label(
-                        "اسم المستخدم أو كلمة المرور غير صحيحة.",
-                        "Incorrect username or password."
-                    ))
+                    st.error(label("اسم المستخدم أو كلمة المرور غير صحيحة.", "Incorrect username or password."))
 
 
 # =====================================================
