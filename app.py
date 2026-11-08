@@ -421,7 +421,7 @@ def normalize_text(value):
 
     text = unicodedata.normalize("NFKC", text)
 
-    text = re.sub(r"[\u064b-\u065f\u0670]", "", text)
+    text = re.sub(r"[ً-ٰٟ]", "", text)
 
     text = text.replace("ـ", "")
 
@@ -729,7 +729,7 @@ def load_notifications(department_id=None):
 
 
 # =====================================================
-# 9. IDENTITY MANAGEMENT
+# 9. IDENTITY MANAGEMENT & PRIVACY
 # =====================================================
 
 def current_identity():
@@ -760,13 +760,62 @@ def logout_citizen():
     st.rerun()
 
 
+def mask_email(email):
+
+    if not email or "@" not in email:
+        return email
+
+    parts = email.split("@")
+    user, domain = parts[0], parts[1]
+
+    if len(user) <= 2:
+        masked_user = user[0] + "*"
+    else:
+        masked_user = user[0] + "*" * (len(user) - 2) + user[-1]
+
+    return f"{masked_user}@{domain}"
+
+
 # =====================================================
 # 10. STAFF LOGIN & PERMISSIONS
 # =====================================================
 
+
+def seed_default_departments():
+    conn = get_connection()
+    depts = conn.execute("SELECT id, department_key, name_ar FROM departments").fetchall()
+    
+    created_count = 0
+    for dept_id, key, name in depts:
+        username = f"{key.lower()}_user"
+        exists = conn.execute("SELECT id FROM staff_users WHERE username=?", (username,)).fetchone()
+        if not exists:
+            default_pass = hash_password(f"{key.lower()}12345")
+            conn.execute("""
+                INSERT INTO staff_users (username, full_name, password_hash, role, department_id, city, is_active)
+                VALUES (?, ?, ?, 'department', ?, '', 1)
+            """, (username, f"مسؤول {name}", default_pass, dept_id))
+            created_count += 1
+            
+    conn.commit()
+    conn.close()
+    return created_count
+
+
 def get_staff():
 
     user_id = st.session_state.get("staff_id")
+
+    # Virtual root administrator
+    if user_id == -999 and st.session_state.get("root_admin"):
+        return (
+            -999,
+            "admin",
+            "مدير النظام",
+            "admin",
+            None,
+            ""
+        )
 
     if not user_id:
         return None
@@ -935,7 +984,7 @@ st.markdown("""
 
 
 # =====================================================
-# 15. NAVIGATION
+# 15. NAVIGATION & PAGE REDIRECTION FIX
 # =====================================================
 
 pages = {
@@ -945,14 +994,21 @@ pages = {
     "my_services": label("خدماتي وبلاغاتي", "My Services"),
     "dashboard": label("لوحة التحكم", "Dashboard"),
     "city_map": label("خريطة المدينة", "City Map"),
-    "ai_intelligence": label("الذكاء الاصطناعي", "AI Intelligence"),
     "assistant": label("مساعد النيل الأبيض", "Smart Assistant"),
     "manage_reports": label("إدارة البلاغات والإشعارات", "Reports & Notifications")
 }
 
+# Handle pending redirection target seamlessly across re-renders
+if "navigation_target" in st.session_state and st.session_state["navigation_target"] in pages:
+    default_key = st.session_state.pop("navigation_target")
+    default_index = list(pages.keys()).index(default_key)
+else:
+    default_index = 0
+
 selected_page = st.sidebar.radio(
     label("القائمة الرئيسية", "Main Navigation"),
     list(pages.keys()),
+    index=default_index,
     format_func=lambda x: pages[x]
 )
 
@@ -1215,21 +1271,21 @@ elif selected_page == "submit_report":
             "Your report will be linked to your identity and routed to the responsible department."
         ))
 
-        try:
+        # Geolocation button & detection with clear status UI
+        col_geo, col_status = st.columns([1, 2])
+        with col_geo:
+            try:
+                detected = streamlit_geolocation()
+            except Exception:
+                detected = None
 
-            detected = streamlit_geolocation()
-
-        except Exception:
-
-            detected = None
-
-        if isinstance(detected, dict) and detected.get("latitude") is not None:
-
-            st.session_state["report_lat"] = float(detected["latitude"])
-
-            st.session_state["report_lon"] = float(detected["longitude"])
-
-            st.success(label("تم تحديد موقعك الجغرافي.", "Location detected."))
+        with col_status:
+            if isinstance(detected, dict) and detected.get("latitude") is not None:
+                st.session_state["report_lat"] = float(detected["latitude"])
+                st.session_state["report_lon"] = float(detected["longitude"])
+                st.success(f"📍 {label('تم تحديد موقعك الجغرافي تلقائياً', 'Location detected automatically')}: ({detected['latitude']:.4f}, {detected['longitude']:.4f})")
+            else:
+                st.caption(label("💡 اضغط على الزر أعلاه لتحديد موقعك الجغرافي بدقة، أو اختر المدينة أدناه.", "Click the button above to auto-detect location, or select a city below."))
 
         default_city = "كوستي"
 
@@ -1254,7 +1310,7 @@ elif selected_page == "submit_report":
                 label("نوع البلاغ", "Report Category"),
                 category_options,
                 format_func=lambda x: (
-                    label("تصنيف تلقائي بواسطة الذكاء الاصطناعي", "Automatic AI Classification")
+                    label("تصنيف تلقائي حسب وصف المشكلة", "Automatic Classification")
                     if x == "Auto" else category_name(x)
                 )
             )
@@ -1484,7 +1540,7 @@ elif selected_page == "my_services":
 
 
 # =====================================================
-# 20. VERIFY IDENTITY
+# 20. VERIFY IDENTITY & PRIVACY PROTECTION
 # =====================================================
 
 elif selected_page == "verify_identity":
@@ -1507,13 +1563,16 @@ elif selected_page == "verify_identity":
 
         if result:
 
-            st.success(label("الهوية الرقمية صحيحة.", "Valid identity."))
+            st.success(label("الهوية الرقمية صحيحة ومسجلة بالنظام.", "Valid registered digital identity."))
 
             st.write(f"**{label('الاسم','Name')}:** {result[1]}")
 
-            st.write(f"**Email:** {result[2]}")
+            # Masked email to protect citizen privacy
+            st.write(f"**Email:** {mask_email(result[2])}")
 
             st.write(f"**Identity Code:** {result[0]}")
+
+            st.write(f"**{label('نوع المستفيد','User Type')}:** {result[3]}")
 
             st.write(f"**{label('تاريخ الإنشاء','Created At')}:** {result[4]}")
 
@@ -1523,12 +1582,12 @@ elif selected_page == "verify_identity":
 
 
 # =====================================================
-# 21. CITY MAP
+# 21. CITY MAP WITH REPORT DETAILS
 # =====================================================
 
 elif selected_page == "city_map":
 
-    st.header("🗺️ " + label("خريطة بلاغات النيل الأبيض", "White Nile Reports Map"))
+    st.header("🗺️ " + label("خريطة بلاغات النيل الأبيض التفصيلية", "White Nile Detailed Reports Map"))
 
     reports = load_reports()
 
@@ -1553,6 +1612,8 @@ elif selected_page == "city_map":
         )
     ]
 
+    located = pd.DataFrame()
+
     if not reports.empty:
 
         located = reports.dropna(
@@ -1575,6 +1636,10 @@ elif selected_page == "city_map":
 
             if not located.empty:
 
+                located["category_ar"] = located["category"].apply(category_name)
+                located["status_ar"] = located["status"].apply(status_name)
+                located["priority_ar"] = located["priority"].apply(priority_name)
+
                 layers.append(
                     pdk.Layer(
                         "ScatterplotLayer",
@@ -1594,7 +1659,8 @@ elif selected_page == "city_map":
             zoom=7
         ),
         tooltip={
-            "text": "{name} {location}"
+            "html": "<b>{report_code}</b><br/><b>التصنيف:</b> {category_ar}<br/><b>الحالة:</b> {status_ar}<br/><b>الموقع:</b> {location}",
+            "style": {"color": "white", "backgroundColor": "#12304A"}
         }
     )
 
@@ -1605,65 +1671,20 @@ elif selected_page == "city_map":
         "Map displays cities and geolocated reports."
     ))
 
+    # Detailed list of geolocated reports below map
+    if not located.empty:
 
-# =====================================================
-# 22. AI INTELLIGENCE
-# =====================================================
+        st.subheader(label("📋 تفاصيل البلاغات المعروضة على الخريطة", "Geolocated Reports Details"))
 
-elif selected_page == "ai_intelligence":
+        for _, r in located.iterrows():
 
-    st.header("🤖 " + label("مركز الذكاء الاصطناعي", "AI Intelligence Center"))
+            with st.expander(f"📍 {r['report_code']} | {r['category_ar']} | {r['status_ar']}"):
 
-    st.info(label(
-        "يحلل النظام وصف البلاغ ويقترح نوع المشكلة والأولوية والجهة المختصة.",
-        "The system analyzes report descriptions and suggests categories, priorities and departments."
-    ))
-
-    description = st.text_area(
-        label("أدخل وصف المشكلة", "Enter Issue Description"),
-        height=140
-    )
-
-    if st.button(label("تحليل ذكي", "Analyze"), type="primary"):
-
-        if description.strip():
-
-            cat, pri, risk, dept, keywords, critical = analyze_report(description)
-
-            c1, c2, c3 = st.columns(3)
-
-            c1.metric(label("التصنيف", "Category"), category_name(cat))
-
-            c2.metric(label("الأولوية", "Priority"), priority_name(pri))
-
-            c3.metric(label("درجة الخطورة", "Risk Score"), f"{risk}%")
-
-            st.progress(risk / 100)
-
-            st.info(f"🏢 **{label('الجهة المختصة','Department')}:** {dept}")
-
-            if keywords:
-
-                st.write(
-                    f"**{label('الكلمات المكتشفة','Detected Keywords')}:** "
-                    + "، ".join(keywords)
-                )
-
-            if critical:
-
-                st.error(label(
-                    "تنبيه: تم اكتشاف مؤشر خطر. يرجى التحقق البشري العاجل.",
-                    "Safety warning: A potential hazard was detected. Human review is required."
-                ))
-
-            st.warning(label(
-                "نتائج التحليل تقديرية وتعتمد على الكلمات والقواعد، ويجب مراجعتها عند الحاجة.",
-                "Analysis is heuristic and should be reviewed when necessary."
-            ))
-
-        else:
-
-            st.warning(label("أدخل وصف المشكلة أولاً.", "Enter a description first."))
+                st.write(f"**{label('الوصف','Description')}:** {r['description']}")
+                st.write(f"**{label('الموقع الجغرافي','Location')}:** {r['location']}")
+                st.write(f"**{label('الإحداثيات','Coordinates')}:** {r['latitude']:.5f}, {r['longitude']:.5f}")
+                st.write(f"**{label('الأولوية','Priority')}:** {r['priority_ar']}")
+                st.write(f"**{label('الجهة المختصة','Department')}:** {r['department_name']}")
 
 
 # =====================================================
@@ -1719,6 +1740,7 @@ elif selected_page == "manage_reports":
         if st.button(label("تسجيل الخروج", "Logout")):
 
             st.session_state.pop("staff_id", None)
+            st.session_state.pop("root_admin", None)
 
             st.rerun()
 
@@ -1748,7 +1770,7 @@ elif selected_page == "manage_reports":
             st.stop()
 
         # -------------------------------------------------
-        # DEPARTMENT NOTIFICATIONS
+        # DEPARTMENT NOTIFICATIONS WITH ENHANCED FILTER & CLEARING
         # -------------------------------------------------
 
         st.subheader("🔔 " + label("الإشعارات الذكية", "Smart Notifications"))
@@ -1767,46 +1789,57 @@ elif selected_page == "manage_reports":
 
         else:
 
-            unread = notifications[
-                notifications["is_read"] == 0
-            ]
+            unread = notifications[notifications["is_read"] == 0]
+            read_notifs = notifications[notifications["is_read"] == 1]
 
-            st.metric(
-                label("إشعارات جديدة", "New Notifications"),
-                len(unread)
-            )
+            n_tab1, n_tab2 = st.tabs([
+                f"{label('غير المقروءة', 'Unread')} ({len(unread)})",
+                f"{label('المقروءة', 'Read')} ({len(read_notifs)})"
+            ])
 
-            for _, notif in unread.iterrows():
+            with n_tab1:
+                if unread.empty:
+                    st.info(label("جميع الإشعارات مقروءة.", "All notifications read."))
+                else:
+                    for _, notif in unread.iterrows():
 
-                with st.container(border=True):
+                        with st.container(border=True):
 
-                    st.markdown(
-                        f"**🔔 {notif['title']}**"
-                    )
+                            st.markdown(f"**🔔 {notif['title']}**")
+                            st.write(notif["message"])
 
-                    st.write(notif["message"])
+                            if pd.notna(notif.get("location")):
+                                st.write(f"📍 {notif['location']}")
 
-                    if pd.notna(notif.get("location")):
+                            st.caption(f"⏱️ {notif['created_at']}")
 
-                        st.write(f"📍 {notif['location']}")
+                            if st.button(
+                                label("تحديد كمقروء", "Mark as Read"),
+                                key=f"read_{notif['id']}"
+                            ):
 
-                    if st.button(
-                        label("تحديد كمقروء", "Mark as Read"),
-                        key=f"read_{notif['id']}"
-                    ):
+                                conn = get_connection()
 
-                        conn = get_connection()
+                                conn.execute("""
+                                    UPDATE admin_notifications
+                                    SET is_read=1 WHERE id=?
+                                """, (int(notif["id"]),))
 
-                        conn.execute("""
-                            UPDATE admin_notifications
-                            SET is_read=1 WHERE id=?
-                        """, (int(notif["id"]),))
+                                conn.commit()
 
-                        conn.commit()
+                                conn.close()
 
-                        conn.close()
+                                st.rerun()
 
-                        st.rerun()
+            with n_tab2:
+                if read_notifs.empty:
+                    st.info(label("لا توجد إشعارات مقروءة.", "No read notifications."))
+                else:
+                    for _, notif in read_notifs.iterrows():
+                        with st.container(border=True):
+                            st.markdown(f"**✔️ {notif['title']}**")
+                            st.write(notif["message"])
+                            st.caption(f"⏱️ {notif['created_at']}")
 
         st.divider()
 
@@ -1929,6 +1962,17 @@ elif selected_page == "manage_reports":
                 hide_index=True
             )
 
+                        # Quick seeding of department accounts
+            with st.expander(label("⚡ إنشاء حسابات الجهات التلقائية", "Generate Default Department Accounts")):
+                st.info(label("توليد حسابات افتراضية لجميع الهجهات الحكومية المسجلة (مثال: electricity_user / electricity12345)", "Generate default accounts for all departments"))
+                if st.button(label("توليد الحسابات الافتراضية الآن", "Generate Default Accounts Now")):
+                    count = seed_default_departments()
+                    if count > 0:
+                        st.success(label(f"تم إنشاء {count} حسابات افتراضية للجهات بنجاح!", f"Successfully created {count} default department accounts!"))
+                    else:
+                        st.info(label("جميع حسابات الجهات الافتراضية موجودة بالفعل.", "All default department accounts already exist."))
+                    st.rerun()
+
             with st.expander(label("➕ إنشاء حساب جهة حكومية", "Create Department Account")):
 
                 with st.form("staff_creation"):
@@ -1948,12 +1992,10 @@ elif selected_page == "manage_reports":
 
                     staff_role = st.selectbox(
                         label("نوع الصلاحية", "Role"),
-                        ["department", "locality", "governor", "admin"],
+                        ["department", "locality"],
                         format_func=lambda x: {
                             "department": "مسؤول جهة حكومية",
-                            "locality": "مدير محلية",
-                            "governor": "مدير الولاية",
-                            "admin": "مدير النظام"
+                            "locality": "مدير محلية"
                         }.get(x, x)
                     )
 
@@ -2099,9 +2141,6 @@ elif selected_page == "manage_reports":
 
                 if hmac.compare_digest(password, expected):
 
-                    st.session_state["staff_id"] = -1
-
-                    # Special admin session handled below
                     st.session_state["root_admin"] = True
 
                     # Create a virtual admin identity
@@ -2133,10 +2172,7 @@ elif selected_page == "manage_reports":
 
                 else:
 
-                    st.error(label(
-                        "اسم المستخدم أو كلمة المرور غير صحيحة.",
-                        "Incorrect username or password."
-                    ))
+                    st.error(label("اسم المستخدم أو كلمة المرور غير صحيحة.", "Incorrect username or password."))
 
 
 # =====================================================
