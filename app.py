@@ -105,8 +105,21 @@ st.markdown(f"""
 .stApp {{background:#EAF4F8;}}
 section[data-testid="stSidebar"] {{background:#12304A; direction:{direction};}}
 section[data-testid="stSidebar"] * {{color:white !important; text-align:{align};}}
+/* Keep Streamlit's main layout direction unchanged; apply RTL to text only. */
 [data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stMainBlockContainer"] {{
- direction:{direction}; text-align:{align};
+ text-align:{align};
+}}
+[data-testid="stMainBlockContainer"] h1,
+[data-testid="stMainBlockContainer"] h2,
+[data-testid="stMainBlockContainer"] h3,
+[data-testid="stMainBlockContainer"] h4,
+[data-testid="stMainBlockContainer"] p,
+[data-testid="stMainBlockContainer"] label,
+[data-testid="stMainBlockContainer"] li,
+[data-testid="stMainBlockContainer"] td,
+[data-testid="stMainBlockContainer"] th {{
+ direction:{direction};
+ text-align:{align};
 }}
 h1,h2,h3,h4,p,label {{direction:{direction}; text-align:{align}; color:#12304A;}}
 input,textarea {{direction:{direction}; text-align:{align};}}
@@ -147,6 +160,21 @@ st.markdown("""
         padding-left:0.8rem !important;
         padding-right:0.8rem !important;
     }
+
+    /* Stack Streamlit columns vertically on phones instead of splitting the screen */
+    div[data-testid="stHorizontalBlock"] {
+        display:flex !important;
+        flex-direction:column !important;
+        flex-wrap:nowrap !important;
+        gap:0.7rem !important;
+    }
+    div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        width:100% !important;
+        min-width:100% !important;
+        max-width:100% !important;
+        flex:1 1 100% !important;
+    }
+
     .wns-header {padding:16px !important;}
     .wns-card {padding:14px !important;}
     div[data-testid="stMetric"] {padding:12px !important;}
@@ -938,3 +966,4 @@ st.markdown("""<div style="text-align:center;padding:20px;color:#12304A;backgrou
 <p>النيل الأبيض الذكية | منصة التحول الرقمي المتكاملة</p>
 <p style="color:#079B91;">Smart Government • AI • Digital Services • Smart Notifications</p>
 </div>""",unsafe_allow_html=True)
+ 
