@@ -783,8 +783,35 @@ elif selected_page == "manage_reports":
         if st.button(label("تسجيل الخروج","Logout")):
             st.session_state.pop("staff_id",None)
             st.session_state.pop("root_admin",None)
+            st.session_state.pop("admin_department_view",None)
             st.rerun()
         reports = load_reports()
+        # المدير العام يستطيع فتح صفحة أي إدارة بضغطة، دون الدخول بحساب المسؤول أو تجاوز كلمة مروره.
+        if role in ["admin", "governor"]:
+            departments_for_admin = pd.read_sql_query(
+                "SELECT id, department_key, name_ar, name_en FROM departments ORDER BY id", get_connection())
+            current_department_view = st.session_state.get("admin_department_view")
+            st.subheader("🏢 " + label("الدخول السريع للإدارات", "Quick Access to Departments"))
+            if current_department_view is not None:
+                selected_dep_row = departments_for_admin[departments_for_admin.id == current_department_view]
+                if not selected_dep_row.empty:
+                    dep_title = selected_dep_row.iloc[0]["name_ar"] if AR else selected_dep_row.iloc[0]["name_en"]
+                    st.info(label(f"أنت تستعرض بلاغات: {dep_title} (وضع المدير العام)",
+                                  f"Viewing reports for: {dep_title} (General Admin view)"))
+                if st.button(label("⬅️ عرض كل الإدارات", "⬅️ Show All Departments"), key="admin_show_all_departments"):
+                    st.session_state.pop("admin_department_view", None)
+                    st.rerun()
+            if not departments_for_admin.empty:
+                card_cols = st.columns(3)
+                for idx, dep_row in departments_for_admin.iterrows():
+                    dep_name = dep_row["name_ar"] if AR else dep_row["name_en"]
+                    dep_icon = DEPARTMENTS.get(dep_row["department_key"], {}).get("icon", "🏢")
+                    with card_cols[idx % 3]:
+                        if st.button(f"{dep_icon} {dep_name}", key=f"admin_open_department_{int(dep_row['id'])}", use_container_width=True):
+                            st.session_state["admin_department_view"] = int(dep_row["id"])
+                            st.rerun()
+            if current_department_view is not None:
+                reports = reports[reports.department_id == current_department_view]
         if role == "department":
             reports = reports[reports.department_id == department_id]
         elif role == "locality":
@@ -966,4 +993,3 @@ st.markdown("""<div style="text-align:center;padding:20px;color:#12304A;backgrou
 <p>النيل الأبيض الذكية | منصة التحول الرقمي المتكاملة</p>
 <p style="color:#079B91;">Smart Government • AI • Digital Services • Smart Notifications</p>
 </div>""",unsafe_allow_html=True)
- 
