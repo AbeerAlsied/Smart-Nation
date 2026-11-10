@@ -267,18 +267,45 @@ def initialize_database():
     for key, item in DEPARTMENTS.items():
         conn.execute("INSERT OR IGNORE INTO departments(department_key,name_ar,name_en) VALUES(?,?,?)",
                      (key, item["ar"], item["en"]))
-    # Backfill old reports only after classification functions are defined.
-    rows = conn.execute("""SELECT id,category,description FROM reports
-        WHERE department_id IS NULL OR department_id='' OR department_name IS NULL OR department_name=''""").fetchall()
-    for rid, cat, desc in rows:
-        if not cat or cat == "Auto":
-            cat = analyze_report(desc)[0]
-        if cat not in DEPARTMENTS:
-            cat = "Other"
-        dep = conn.execute("SELECT id,name_ar FROM departments WHERE department_key=?", (cat,)).fetchone()
-        if dep:
+    # Repair department assignment for ALL legacy reports, not only NULL values.
+    # Older versions may have saved Arabic labels, lowercase names, or stale department IDs.
+    category_aliases = {}
+    for key, item in DEPARTMENTS.items():
+        category_aliases[normalize_text(key)] = key
+        category_aliases[normalize_text(item["ar"])] = key
+        category_aliases[normalize_text(item["en"])] = key
+    extra_aliases = {
+        "كهرباء": "Electricity", "الكهرباء": "Electricity", "electric": "Electricity",
+        "مياه": "Water", "المياه": "Water", "الموية": "Water", "water authority": "Water",
+        "نظافة": "Cleaning", "النظافة": "Cleaning", "نفايات": "Cleaning", "waste": "Cleaning",
+        "طرق": "Roads", "الطرق": "Roads", "الجسور": "Roads", "roads and bridges": "Roads",
+        "مجاري": "Sewage", "الصرف الصحي": "Sewage", "sewerage": "Sewage",
+        "الصحة": "Health", "صحة": "Health", "مستشفى": "Health",
+        "البيئة": "Environment", "بيئة": "Environment",
+        "الدفاع المدني": "Emergency", "طوارئ": "Emergency", "حريق": "Emergency",
+        "المرور": "Traffic", "شرطة المرور": "Traffic",
+        "التعليم": "Education", "مدرسة": "Education",
+        "أخرى": "Other", "عام": "Other", "متابعة": "Other", "الشرطة": "Other"
+    }
+    category_aliases.update({normalize_text(alias): key for alias, key in extra_aliases.items()})
+    rows = conn.execute("SELECT id,category,description,department_id,department_name FROM reports").fetchall()
+    for rid, old_category, desc, old_dep_id, old_dep_name in rows:
+        normalized_category = normalize_text(old_category)
+        canonical_category = category_aliases.get(normalized_category)
+        if not canonical_category:
+            # Classify from the report text when the saved category is missing or legacy/unknown.
+            canonical_category = analyze_report(desc or "")[0]
+        if canonical_category not in DEPARTMENTS:
+            canonical_category = "Other"
+        dep = conn.execute("SELECT id,name_ar FROM departments WHERE department_key=?", (canonical_category,)).fetchone()
+        if dep and (old_category != canonical_category or old_dep_id != dep[0] or old_dep_name != dep[1]):
             conn.execute("UPDATE reports SET category=?,department_id=?,department_name=? WHERE id=?",
-                         (cat, dep[0], dep[1], rid))
+                         (canonical_category, dep[0], dep[1], rid))
+    # Bring old department notifications into line with the repaired report assignment.
+    conn.execute("""UPDATE admin_notifications
+        SET department_id=(SELECT r.department_id FROM reports r WHERE r.id=admin_notifications.report_id)
+        WHERE recipient_type='department' AND report_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM reports r WHERE r.id=admin_notifications.report_id)""")
     conn.commit()
     conn.close()
 
@@ -790,8 +817,10 @@ elif selected_page == "manage_reports":
         reports = load_reports()
         # المدير العام يستطيع فتح صفحة أي إدارة بضغطة، دون الدخول بحساب المسؤول أو تجاوز كلمة مروره.
         if role in ["admin", "governor"]:
+            dept_conn = get_connection()
             departments_for_admin = pd.read_sql_query(
-                "SELECT id, department_key, name_ar, name_en FROM departments ORDER BY id", get_connection())
+                "SELECT id, department_key, name_ar, name_en FROM departments ORDER BY id", dept_conn)
+            dept_conn.close()
             current_department_view = st.session_state.get("admin_department_view")
             if current_department_view is None:
                 st.subheader("🏢 " + label("الدخول السريع للإدارات", "Quick Access to Departments"))
@@ -891,60 +920,65 @@ elif selected_page == "manage_reports":
                             st.rerun()
         if role in ["admin","governor"] and st.session_state.get("admin_department_view") is None:
             st.divider()
-            st.subheader("🏢 " + label("إدارة الجهات والمستخدمين","Departments & Staff Management"))
-            conn=get_connection()
-            departments_df=pd.read_sql_query("SELECT * FROM departments ORDER BY id",conn)
-            conn.close()
-            st.dataframe(departments_df,use_container_width=True,hide_index=True)
-            with st.expander(label("⚡ إنشاء حسابات الجهات التلقائية","Generate Default Department Accounts")):
-                st.warning(label("الحسابات الافتراضية مخصصة للتجربة فقط. غيّر كلمات المرور قبل النشر الفعلي.",
-                                 "Default accounts are for demonstration only. Change passwords before public deployment."))
-                if st.button(label("توليد الحسابات الافتراضية الآن","Generate Default Accounts Now")):
-                    count=seed_default_departments()
-                    st.success(label(f"تم إنشاء {count} حسابات جديدة.","Created {count} new accounts."))
-                    st.rerun()
-            with st.expander(label("➕ إنشاء حساب جهة حكومية","Create Department Account")):
-                with st.form("staff_creation"):
-                    staff_name=st.text_input(label("اسم المسؤول","Staff Name"))
-                    username_new=st.text_input(label("اسم المستخدم","Username"))
-                    staff_password=st.text_input(label("كلمة المرور","Password"),type="password")
-                    staff_role=st.selectbox(label("نوع الصلاحية","Role"),["department","locality"],
-                        format_func=lambda x: "مسؤول جهة حكومية" if x=="department" and AR else ("مدير محلية" if x=="locality" and AR else x))
-                    selected_department=st.selectbox(label("الجهة الحكومية","Department"),departments_df.id.tolist(),
-                        format_func=lambda x: departments_df.loc[departments_df.id==x,"name_ar"].iloc[0] if AR else departments_df.loc[departments_df.id==x,"name_en"].iloc[0])
-                    staff_city_new=st.selectbox(label("المحلية / المدينة","City"),[""]+list(CITIES))
-                    create_user=st.form_submit_button(label("إنشاء الحساب","Create Account"))
-                if create_user:
-                    if not staff_name.strip() or not username_new.strip() or len(staff_password)<8:
-                        st.error(label("أدخل جميع البيانات، واجعل كلمة المرور 8 أحرف على الأقل.","Complete all fields and use at least 8 characters."))
-                    else:
-                        conn=get_connection()
-                        try:
-                            conn.execute("""INSERT INTO staff_users(username,full_name,password_hash,role,department_id,city)
-                                VALUES(?,?,?,?,?,?)""",(username_new.strip(),staff_name.strip(),hash_password(staff_password),
-                                staff_role,selected_department,staff_city_new))
-                            conn.commit()
-                            st.success(label("تم إنشاء حساب المسؤول بنجاح.","Staff account created successfully."))
-                            st.rerun()
-                        except sqlite3.IntegrityError:
-                            st.error(label("اسم المستخدم مستخدم بالفعل.","Username already exists."))
-                        finally:
-                            conn.close()
-            with st.expander(label("👥 عرض حسابات المسؤولين","View Staff Accounts")):
+            with st.expander("🏢 " + label("إدارة الجهات وحسابات المسؤولين","Departments & Staff Accounts Management"), expanded=False):
+                tab_departments, tab_staff = st.tabs([label("🏛️ الجهات الحكومية","Government Departments"), label("👥 حسابات المسؤولين","Staff Accounts")])
                 conn=get_connection()
-                staff_df=pd.read_sql_query("SELECT id,username,full_name,role,department_id,city,is_active FROM staff_users ORDER BY id DESC",conn)
+                departments_df=pd.read_sql_query("SELECT * FROM departments ORDER BY id",conn)
                 conn.close()
-                st.dataframe(staff_df,use_container_width=True,hide_index=True)
-                active_staff=staff_df[staff_df.is_active==1]
-                if not active_staff.empty:
-                    selected_staff=st.selectbox(label("اختر حساباً لتعطيله","Select Account to Disable"),active_staff.id.tolist())
-                    if st.button(label("تعطيل الحساب","Disable Account")):
+                with tab_departments:
+                    st.subheader(label("الجهات الحكومية","Government Departments"))
+                    st.dataframe(departments_df,use_container_width=True,hide_index=True)
+                    with st.expander(label("⚡ إنشاء حسابات الجهات التلقائية","Generate Default Department Accounts")):
+                        st.warning(label("الحسابات الافتراضية مخصصة للتجربة فقط. غيّر كلمات المرور قبل النشر الفعلي.",
+                                         "Default accounts are for demonstration only. Change passwords before public deployment."))
+                        if st.button(label("توليد الحسابات الافتراضية الآن","Generate Default Accounts Now"), key="generate_dept_accounts"):
+                            count=seed_default_departments()
+                            st.success(label(f"تم إنشاء {count} حسابات جديدة.","Created {count} new accounts."))
+                            st.rerun()
+                with tab_staff:
+                    st.subheader(label("إنشاء وعرض حسابات المسؤولين","Create and View Staff Accounts"))
+                    with st.expander(label("➕ إنشاء حساب مسؤول جهة","Create Department Account"), expanded=False):
+                        with st.form("staff_creation"):
+                            staff_name=st.text_input(label("اسم المسؤول","Staff Name"))
+                            username_new=st.text_input(label("اسم المستخدم","Username"))
+                            staff_password=st.text_input(label("كلمة المرور","Password"),type="password")
+                            staff_role=st.selectbox(label("نوع الصلاحية","Role"),["department","locality"],
+                                format_func=lambda x: "مسؤول جهة حكومية" if x=="department" and AR else ("مدير محلية" if x=="locality" and AR else x))
+                            selected_department=st.selectbox(label("الجهة الحكومية","Department"),departments_df.id.tolist(),
+                                format_func=lambda x: departments_df.loc[departments_df.id==x,"name_ar"].iloc[0] if AR else departments_df.loc[departments_df.id==x,"name_en"].iloc[0])
+                            staff_city_new=st.selectbox(label("المحلية / المدينة","City"),[""]+list(CITIES))
+                            create_user=st.form_submit_button(label("إنشاء الحساب","Create Account"))
+                        if create_user:
+                            if not staff_name.strip() or not username_new.strip() or len(staff_password)<8:
+                                st.error(label("أدخل جميع البيانات، واجعل كلمة المرور 8 أحرف على الأقل.","Complete all fields and use at least 8 characters."))
+                            else:
+                                conn=get_connection()
+                                try:
+                                    conn.execute("""INSERT INTO staff_users(username,full_name,password_hash,role,department_id,city)
+                                        VALUES(?,?,?,?,?,?)""",(username_new.strip(),staff_name.strip(),hash_password(staff_password),
+                                        staff_role,selected_department,staff_city_new))
+                                    conn.commit()
+                                    st.success(label("تم إنشاء حساب المسؤول بنجاح.","Staff account created successfully."))
+                                    st.rerun()
+                                except sqlite3.IntegrityError:
+                                    st.error(label("اسم المستخدم مستخدم بالفعل.","Username already exists."))
+                                finally:
+                                    conn.close()
+                    with st.expander(label("📋 عرض حسابات المسؤولين","View Staff Accounts"), expanded=True):
                         conn=get_connection()
-                        conn.execute("UPDATE staff_users SET is_active=0 WHERE id=?",(int(selected_staff),))
-                        conn.commit()
+                        staff_df=pd.read_sql_query("SELECT id,username,full_name,role,department_id,city,is_active FROM staff_users ORDER BY id DESC",conn)
                         conn.close()
-                        st.success(label("تم تعطيل الحساب.","Account disabled."))
-                        st.rerun()
+                        st.dataframe(staff_df,use_container_width=True,hide_index=True)
+                        active_staff=staff_df[staff_df.is_active==1]
+                        if not active_staff.empty:
+                            selected_staff=st.selectbox(label("اختر حساباً لتعطيله","Select Account to Disable"),active_staff.id.tolist(),key="disable_staff_select")
+                            if st.button(label("تعطيل الحساب","Disable Account"),key="disable_staff_button"):
+                                conn=get_connection()
+                                conn.execute("UPDATE staff_users SET is_active=0 WHERE id=?",(int(selected_staff),))
+                                conn.commit()
+                                conn.close()
+                                st.success(label("تم تعطيل الحساب.","Account disabled."))
+                                st.rerun()
             st.divider()
             st.download_button(label("📥 تحميل جميع البلاغات CSV","Download Reports CSV"),
                 data=reports.to_csv(index=False).encode("utf-8-sig"),
