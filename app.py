@@ -779,7 +779,9 @@ elif selected_page == "manage_reports":
     staff = get_staff()
     if staff:
         staff_id,username,full_name,role,department_id,staff_city = staff
-        st.success(f"{label('مرحباً','Welcome')} {full_name} | {role}")
+        # لا تعرض رسالة ترحيب للمدير العام أثناء فتح إدارة محددة.
+        if not (role in ["admin", "governor"] and st.session_state.get("admin_department_view") is not None):
+            st.success(f"{label('مرحباً','Welcome')} {full_name} | {role}")
         if st.button(label("تسجيل الخروج","Logout")):
             st.session_state.pop("staff_id",None)
             st.session_state.pop("root_admin",None)
@@ -791,26 +793,27 @@ elif selected_page == "manage_reports":
             departments_for_admin = pd.read_sql_query(
                 "SELECT id, department_key, name_ar, name_en FROM departments ORDER BY id", get_connection())
             current_department_view = st.session_state.get("admin_department_view")
-            st.subheader("🏢 " + label("الدخول السريع للإدارات", "Quick Access to Departments"))
-            if current_department_view is not None:
+            if current_department_view is None:
+                st.subheader("🏢 " + label("الدخول السريع للإدارات", "Quick Access to Departments"))
+                if not departments_for_admin.empty:
+                    card_cols = st.columns(3)
+                    for idx, dep_row in departments_for_admin.iterrows():
+                        dep_name = dep_row["name_ar"] if AR else dep_row["name_en"]
+                        dep_icon = DEPARTMENTS.get(dep_row["department_key"], {}).get("icon", "🏢")
+                        with card_cols[idx % 3]:
+                            if st.button(f"{dep_icon} {dep_name}", key=f"admin_open_department_{int(dep_row['id'])}", use_container_width=True):
+                                st.session_state["admin_department_view"] = int(dep_row["id"])
+                                st.rerun()
+            else:
                 selected_dep_row = departments_for_admin[departments_for_admin.id == current_department_view]
-                if not selected_dep_row.empty:
-                    dep_title = selected_dep_row.iloc[0]["name_ar"] if AR else selected_dep_row.iloc[0]["name_en"]
-                    st.info(label(f"أنت تستعرض بلاغات: {dep_title} (وضع المدير العام)",
-                                  f"Viewing reports for: {dep_title} (General Admin view)"))
-                if st.button(label("⬅️ عرض كل الإدارات", "⬅️ Show All Departments"), key="admin_show_all_departments"):
+                if selected_dep_row.empty:
                     st.session_state.pop("admin_department_view", None)
                     st.rerun()
-            if not departments_for_admin.empty:
-                card_cols = st.columns(3)
-                for idx, dep_row in departments_for_admin.iterrows():
-                    dep_name = dep_row["name_ar"] if AR else dep_row["name_en"]
-                    dep_icon = DEPARTMENTS.get(dep_row["department_key"], {}).get("icon", "🏢")
-                    with card_cols[idx % 3]:
-                        if st.button(f"{dep_icon} {dep_name}", key=f"admin_open_department_{int(dep_row['id'])}", use_container_width=True):
-                            st.session_state["admin_department_view"] = int(dep_row["id"])
-                            st.rerun()
-            if current_department_view is not None:
+                dep_title = selected_dep_row.iloc[0]["name_ar"] if AR else selected_dep_row.iloc[0]["name_en"]
+                st.header("🏢 " + dep_title)
+                if st.button(label("⬅️ رجوع للإدارات", "⬅️ Back to Departments"), key="admin_show_all_departments"):
+                    st.session_state.pop("admin_department_view", None)
+                    st.rerun()
                 reports = reports[reports.department_id == current_department_view]
         if role == "department":
             reports = reports[reports.department_id == department_id]
@@ -821,7 +824,12 @@ elif selected_page == "manage_reports":
             st.error(label("ليس لديك صلاحية.","Access denied."))
             st.stop()
         st.subheader("🔔 " + label("الإشعارات الذكية","Smart Notifications"))
-        notifications = load_notifications(department_id) if role=="department" else load_notifications()
+        if role == "department":
+            notifications = load_notifications(department_id)
+        elif role in ["admin", "governor"] and st.session_state.get("admin_department_view") is not None:
+            notifications = load_notifications(int(st.session_state["admin_department_view"]))
+        else:
+            notifications = load_notifications()
         if notifications.empty:
             st.info(label("لا توجد إشعارات.","No notifications."))
         else:
@@ -881,7 +889,7 @@ elif selected_page == "manage_reports":
                                 f"تم تحديث حالة البلاغ {row.report_code} إلى {new_status}","admin",None)
                             st.success(label("تم تحديث البلاغ وإشعار المواطن.","Report updated and citizen notified."))
                             st.rerun()
-        if role in ["admin","governor"]:
+        if role in ["admin","governor"] and st.session_state.get("admin_department_view") is None:
             st.divider()
             st.subheader("🏢 " + label("إدارة الجهات والمستخدمين","Departments & Staff Management"))
             conn=get_connection()
