@@ -983,6 +983,20 @@ elif selected_page == "manage_reports":
             st.download_button(label("📥 تحميل جميع البلاغات CSV","Download Reports CSV"),
                 data=reports.to_csv(index=False).encode("utf-8-sig"),
                 file_name="WNS_Reports.csv",mime="text/csv")
+            # نسخة احتياطية من قاعدة البيانات الفعلية المستخدمة حالياً؛ لا تحذف أو تعدل البيانات.
+            backup_source = get_connection()
+            backup_memory = sqlite3.connect(":memory:")
+            backup_source.backup(backup_memory)
+            backup_source.close()
+            backup_data = backup_memory.serialize()
+            backup_memory.close()
+            st.download_button(
+                label="🗄️ تنزيل نسخة احتياطية من قاعدة البيانات",
+                data=backup_data,
+                file_name="WNS_smart_nation_backup.db",
+                mime="application/x-sqlite3",
+                help="نزّل هذه النسخة وأرسلها هنا لفحص البلاغات القديمة وتوجيهها دون حذف أي بيانات."
+            )
     else:
         tab_admin,tab_dept=st.tabs([label("دخول الإدارة العامة","General Administration"),label("دخول الجهات الحكومية","Department Login")])
         with tab_admin:
